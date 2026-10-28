@@ -144,7 +144,7 @@ export function ThreadView({ threadId, focusMessageId, onClose }: { threadId: st
         <ToolbarButton label={t('Marquer comme non lu (U)')} onClick={() => act('unread')}>
           <MailOpen />
         </ToolbarButton>
-        <ToolbarButton label={thread.starred ? t('Ne plus suivre') : t('Suivre (S)')} onClick={() => act(thread.starred ? 'unstar' : 'star')}>
+        <ToolbarButton label={thread.starred ? t('Retirer des favoris') : t('Ajouter aux favoris (S)')} onClick={() => act(thread.starred ? 'unstar' : 'star')}>
           <Star className={cn(thread.starred && 'fill-warning text-warning')} />
         </ToolbarButton>
         <div className="ml-auto flex items-center gap-1">

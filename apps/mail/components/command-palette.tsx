@@ -10,7 +10,7 @@ const VIEWS = [
   { to: '/mail/inbox', label: t('Boîte de réception'), icon: Inbox, shortcut: 'G I' },
   { to: '/mail/inbox?tag=important', label: t('Important'), icon: Flame, shortcut: 'G P' },
   { to: '/mail/inbox?tag=opportunity', label: t('Opportunités'), icon: Sparkles, shortcut: 'G O' },
-  { to: '/mail/starred', label: t('Suivis'), icon: Star },
+  { to: '/mail/starred', label: t('Favoris'), icon: Star },
   { to: '/subscriptions', label: t('Abonnements'), icon: Newspaper },
 ];
 

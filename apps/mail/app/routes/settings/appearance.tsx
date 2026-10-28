@@ -25,7 +25,7 @@ const SHORTCUTS = [
   ['E', t('Archiver')],
   ['#', t('Supprimer')],
   ['!', t('Spam')],
-  ['S', t('Suivre')],
+  ['S', t('Ajouter aux favoris')],
   ['U', t('Marquer comme non lu')],
   ['X', t('Sélectionner')],
   ['/', t('Rechercher')],

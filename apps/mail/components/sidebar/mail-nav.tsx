@@ -50,7 +50,7 @@ type Counts = {
 /** Views that always stay in the pinned section (they can be reordered, not removed). */
 const FIXED_VIEWS = {
   'view:inbox': { label: t('Boîte de réception'), icon: Inbox, to: '/mail/inbox', view: 'inbox' },
-  'view:starred': { label: t('Suivis'), icon: Star, to: '/mail/starred', view: 'starred' },
+  'view:starred': { label: t('Favoris'), icon: Star, to: '/mail/starred', view: 'starred' },
   'view:subscriptions': { label: t('Abonnements'), icon: UserMinus, to: '/subscriptions', view: null },
 } as const;
 type FixedKey = keyof typeof FIXED_VIEWS;

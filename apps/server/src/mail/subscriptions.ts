@@ -93,6 +93,11 @@ export class Subscriptions {
     return { ...outcome, id };
   }
 
+  /**
+   * One row per mailbox and sender: the same newsletter received on two accounts is two
+   * subscriptions (each unsubscribes on its own). A mail Gmail keeps in several folders
+   * (Inbox, All Mail…) counts once.
+   */
   list(): SubscriptionRow[] {
     const senders = this.ctx.db.all<{
       from_email: string;
@@ -105,24 +110,30 @@ export class Subscriptions {
       thread_id: string;
       unsub: string | null;
     }>(
-      `SELECT m.from_email, MAX(m.from_name) AS from_name, COUNT(*) AS total,
-         SUM(CASE WHEN m.unread = 0 THEN 1 ELSE 0 END) AS opened, SUM(m.unread) AS unread,
-         MAX(m.date) AS last_at, MAX(m.account_id) AS account_id,
-         (SELECT m3.thread_id FROM messages m3 WHERE m3.from_email = m.from_email ORDER BY m3.date DESC LIMIT 1) AS thread_id,
-         MAX(t.unsubscribe) AS unsub
-       FROM messages m JOIN triage t ON t.message_id = m.id JOIN mailboxes mb ON mb.id = m.mailbox_id
-       WHERE t.newsletter = 1 AND mb.special_use IN ('inbox', 'archive', 'all', 'trash')
-       GROUP BY m.from_email ORDER BY total DESC LIMIT 200`,
+      `WITH copies AS (
+         SELECT m.account_id, m.from_email, m.from_name, m.date, m.thread_id, m.unread, t.unsubscribe,
+           COALESCE(m.message_id, m.id) AS mail
+         FROM messages m JOIN triage t ON t.message_id = m.id JOIN mailboxes mb ON mb.id = m.mailbox_id
+         WHERE t.newsletter = 1 AND mb.special_use IN ('inbox', 'archive', 'all', 'trash')
+       ), mails AS (
+         SELECT account_id, from_email, mail, MAX(from_name) AS from_name, MAX(date) AS date, MIN(unread) AS unread,
+           MAX(unsubscribe) AS unsubscribe, MAX(thread_id) AS thread_id
+         FROM copies GROUP BY account_id, from_email, mail
+       )
+       SELECT account_id, from_email, MAX(from_name) AS from_name, COUNT(*) AS total,
+         SUM(CASE WHEN unread = 0 THEN 1 ELSE 0 END) AS opened, SUM(unread) AS unread, MAX(date) AS last_at,
+         (SELECT x.thread_id FROM mails x WHERE x.account_id = mails.account_id AND x.from_email = mails.from_email ORDER BY x.date DESC LIMIT 1) AS thread_id,
+         MAX(unsubscribe) AS unsub
+       FROM mails GROUP BY account_id, from_email ORDER BY total DESC LIMIT 400`,
     );
-    const latestStatus = new Map(
-      this.ctx.db
-        .all<{ from_email: string; status: string; detail: string }>(
-          'SELECT from_email, status, detail FROM unsubscribes u1 WHERE at = (SELECT MAX(at) FROM unsubscribes u2 WHERE u2.from_email = u1.from_email)',
-        )
-        .map((r) => [r.from_email, r]),
+    // Latest attempt per mailbox and sender (older rows without an account apply to all of them).
+    const attempts = this.ctx.db.all<{ account_id: string | null; from_email: string; status: string; detail: string }>(
+      'SELECT account_id, from_email, status, detail FROM unsubscribes ORDER BY at ASC',
     );
+    const latestStatus = new Map<string, { status: string; detail: string }>();
+    for (const a of attempts) latestStatus.set(`${a.account_id ?? '*'}|${a.from_email}`, a);
     return senders.map((s) => {
-      const status = latestStatus.get(s.from_email);
+      const status = latestStatus.get(`${s.account_id}|${s.from_email}`) ?? latestStatus.get(`*|${s.from_email}`);
       return {
         fromEmail: s.from_email,
         fromName: s.from_name,

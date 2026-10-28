@@ -14,6 +14,7 @@ import {
   Globe,
   HelpCircle,
   Inbox,
+  Layers,
   KeyRound,
   Leaf,
   Loader2,
@@ -35,6 +36,7 @@ import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BrandLogo, brandForProvider } from '@/components/brand-logo';
 import { InfoHint } from '@/components/ui/info-hint';
+import { useSuggestBusinessPack } from '@/components/category-packs';
 import { ZMailLogo } from '@/components/zmail-logo';
 import { useTRPC, type Outputs } from '@/lib/trpc';
 import { useCatalog } from '@/hooks/use-catalog';
@@ -47,7 +49,7 @@ import { t } from '@/lib/i18n';
 
 type Server = { host: string; port: number; secure: boolean };
 type Discovery = Outputs['accounts']['discover'];
-type StepId = 'provider' | 'sender' | 'email' | 'password' | 'servers' | 'business' | 'connect';
+type StepId = 'usage' | 'provider' | 'sender' | 'email' | 'password' | 'servers' | 'business' | 'connect';
 
 /** Display data for each provider tile; the server settings themselves come from the engine. */
 const PROVIDERS: { id: string; name: string; hint: string; icon: LucideIcon; brand?: Brand }[] = [
@@ -90,6 +92,15 @@ const PROVIDERS: { id: string; name: string; hint: string; icon: LucideIcon; bra
     hint: 'Mailcow, Dovecot, cPanel…',
     icon: ServerCog,
   },
+];
+
+/** First launch only: what ZMail is for decides the starting categories. */
+const USAGE_STEP = { id: 'usage' as const, label: t('Usage'), icon: Layers };
+
+const USAGES = [
+  { id: 'personal' as const, icon: User, title: t('Usage personnel'), hint: t('Famille et amis, administratif, voyages, achats') },
+  { id: 'business' as const, icon: Briefcase, title: t('Usage professionnel'), hint: t('Clients et opportunités, litiges de paiement, réunions') },
+  { id: 'both' as const, icon: Layers, title: t('Les deux'), hint: t('Toutes les catégories, perso et pro') },
 ];
 
 const STEPS: { id: StepId; label: string; icon: LucideIcon }[] = [
@@ -357,7 +368,17 @@ export function AccountWizard({
   const catalog = useCatalog();
   const { data: presets } = useQuery(trpc.accounts.presets.queryOptions());
 
+  const { data: savedUsage, isFetched: usageFetched } = useQuery(trpc.catalog.usage.queryOptions());
+  // Asked once, on the very first account.
+  const askUsage = variant === 'page' && usageFetched && savedUsage === null && catalog.accounts.length === 0;
+  const steps: { id: StepId; label: string; icon: LucideIcon }[] = askUsage ? [USAGE_STEP, ...STEPS] : STEPS;
+  const [usage, setUsage] = useState<'personal' | 'business' | 'both' | null>(null);
+  const applyUsage = useMutation(trpc.catalog.setUsage.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries({ queryKey: trpc.catalog.pathKey() }) }));
   const [step, setStep] = useState<StepId>('provider');
+  useEffect(() => {
+    if (askUsage && step === 'provider' && !providerId) setStep('usage');
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [askUsage]);
   const [providerId, setProviderId] = useState<string | null>(null);
   const [identity, setIdentity] = useState<'person' | 'company'>('person');
   const [name, setName] = useState('');
@@ -381,12 +402,13 @@ export function AccountWizard({
   const test = useMutation(trpc.accounts.test.mutationOptions());
   const create = useMutation(trpc.accounts.create.mutationOptions());
   const saveBusiness = useMutation(trpc.catalog.saveBusiness.mutationOptions());
+  const suggestPack = useSuggestBusinessPack();
   const reassign = useMutation(trpc.catalog.reassignBusinesses.mutationOptions());
 
   const provider = PROVIDERS.find((p) => p.id === providerId);
   const preset = presets?.find((p) => p.id === providerId);
   const domain = email.split('@')[1]?.toLowerCase() ?? '';
-  const index = STEPS.findIndex((s) => s.id === step);
+  const index = steps.findIndex((s) => s.id === step);
   const guide = providerId ? PASSWORD_GUIDES[providerId] : undefined;
   const ownDomain = domain && !FREE_DOMAINS.test(domain);
   const codeRecognised = Boolean(guide?.pattern?.test(password));
@@ -442,6 +464,7 @@ export function AccountWizard({
   }, [email, providerId, domain]);
 
   const canContinue: Record<StepId, boolean> = {
+    usage: Boolean(usage),
     provider: Boolean(providerId),
     sender: name.trim().length > 1,
     email: isEmail(email),
@@ -460,8 +483,13 @@ export function AccountWizard({
     setStep(target);
   };
   const next = () => {
-    const nextStep = STEPS[index + 1];
+    const nextStep = steps[index + 1];
     if (!nextStep) return;
+    if (step === 'usage' && usage) {
+      applyUsage.mutate({ usage });
+      // A personal mailbox rarely belongs to a business.
+      if (usage === 'personal') setBusinessMode('none');
+    }
     if (nextStep.id === 'connect') void connect();
     go(nextStep.id);
   };
@@ -500,6 +528,7 @@ export function AccountWizard({
       });
       // Mail synced in the meantime gets its business too.
       void reassign.mutateAsync();
+      void suggestPack();
     }
     void queryClient.invalidateQueries({ queryKey: trpc.accounts.list.queryKey() });
     void queryClient.invalidateQueries({ queryKey: trpc.catalog.businesses.queryKey() });
@@ -515,7 +544,20 @@ export function AccountWizard({
       className={variant === 'dialog' ? 'flex min-h-[440px] flex-col justify-center' : undefined}
     >
       <div>
-        {step === 'provider' ? (
+        {step === 'usage' ? (
+          <>
+            <StepHeader
+              icon={Layers}
+              title={t('Vous utilisez ZMail pour…')}
+              subtitle={t('Vos catégories de départ en dépendent : moins de catégories, moins de bruit. Vous pourrez en ajouter à tout moment.')}
+            />
+            <div className="grid gap-2">
+              {USAGES.map((u) => (
+                <Choice key={u.id} selected={usage === u.id} onClick={() => setUsage(u.id)} icon={u.icon} title={u.title} hint={u.hint} />
+              ))}
+            </div>
+          </>
+        ) : step === 'provider' ? (
           <>
             <StepHeader
               icon={Inbox}
@@ -1019,7 +1061,7 @@ export function AccountWizard({
         {index > 0 ? (
           <button
             type="button"
-            onClick={() => go(STEPS[index - 1]!.id)}
+            onClick={() => go(steps[index - 1]!.id)}
             className="text-muted-foreground hover:text-foreground flex h-10 items-center gap-1.5 rounded-lg px-3 text-[13.5px]"
           >
             <ArrowLeft className="size-4" /> {t('Retour')}
@@ -1034,7 +1076,7 @@ export function AccountWizard({
           </button>
         ) : null}
         <span className="text-muted-foreground ml-auto text-[12px] tabular-nums">
-          {t('Étape {n} sur {total}', { n: index + 1, total: STEPS.length })}
+          {t('Étape {n} sur {total}', { n: index + 1, total: steps.length })}
         </span>
         <button
           type="button"
@@ -1042,7 +1084,7 @@ export function AccountWizard({
           onClick={next}
           className="bg-primary text-primary-foreground hover:bg-primary/90 shadow-xs ml-3 flex h-10 items-center gap-2 rounded-lg px-5 text-[14px] font-medium transition disabled:opacity-40"
         >
-          {STEPS[index + 1]?.id === 'connect' ? t('Connecter la boîte') : t('Continuer')}
+          {steps[index + 1]?.id === 'connect' ? t('Connecter la boîte') : t('Continuer')}
           <ArrowRight className="size-4" />
         </button>
       </div>
@@ -1052,7 +1094,7 @@ export function AccountWizard({
     return (
       <div>
         <div className="mb-5 flex gap-1">
-          {STEPS.map((s, i) => (
+          {steps.map((s, i) => (
             <span
               key={s.id}
               className={cn('h-1 flex-1 rounded-full', i <= index ? 'bg-primary' : 'bg-muted')}
@@ -1078,7 +1120,7 @@ export function AccountWizard({
           </div>
         </div>
         <ol className="space-y-1">
-          {STEPS.map((s, i) => {
+          {steps.map((s, i) => {
             const done = i < index || (s.id === 'connect' && created);
             const current = i === index;
             return (

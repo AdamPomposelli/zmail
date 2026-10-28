@@ -112,7 +112,7 @@ function NormalRow({ thread, selected, focused, checked, showAccount, tagById, b
           {[
             { action: thread.mailbox === 'archive' || thread.mailbox === 'all' ? null : ('archive' as const), icon: Archive, label: t('Archiver (E)') },
             { action: thread.unread ? ('read' as const) : ('unread' as const), icon: MailOpen, label: thread.unread ? t('Marquer comme lu') : t('Marquer comme non lu') },
-            { action: thread.starred ? ('unstar' as const) : ('star' as const), icon: Star, label: t('Suivre (S)') },
+            { action: thread.starred ? ('unstar' as const) : ('star' as const), icon: Star, label: t('Ajouter aux favoris (S)') },
             { action: thread.mailbox === 'trash' ? ('deleteForever' as const) : ('trash' as const), icon: Trash2, label: t('Supprimer (#)') },
           ]
             .filter((b) => b.action)
@@ -199,7 +199,7 @@ function CompactRow({ thread, selected, focused, checked, showAccount, tagById, 
           type="button"
           onClick={(e) => (e.stopPropagation(), onAction(thread.starred ? 'unstar' : 'star', thread.id))}
           className={cn('flex size-4 shrink-0 items-center justify-center', !thread.starred && 'opacity-0 group-hover:opacity-60 hover:!opacity-100')}
-          aria-label={thread.starred ? t('Ne plus suivre') : t('Suivre')}
+          aria-label={thread.starred ? t('Retirer des favoris') : t('Ajouter aux favoris')}
         >
           <Star className={cn('size-3.5', thread.starred ? 'fill-warning text-warning' : 'text-muted-foreground')} />
         </button>

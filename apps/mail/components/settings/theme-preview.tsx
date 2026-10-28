@@ -29,7 +29,7 @@ export function ThemeAppPreview({ preset, mode }: { preset: ThemePreset; mode: '
           ['_inbox', t('Réception'), 21, true],
           ['flame', t('Important'), 3, false],
           ['reply', t('À répondre'), 3, false],
-          ['_starred', t('Suivis'), 0, false],
+          ['_starred', t('Favoris'), 0, false],
         ].map(([icon, label, count, active]) => (
           <div key={label as string} className={cn('flex h-6 items-center gap-1.5 rounded-md px-1.5', active ? 'bg-sidebar-accent text-sidebar-accent-foreground font-medium' : 'text-sidebar-foreground')}>
             <SolarIcon name={icon as string} className={cn('size-3.5', active ? 'text-sidebar-accent-foreground' : 'text-muted-foreground')} />

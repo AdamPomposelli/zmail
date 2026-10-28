@@ -8,6 +8,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TagChip } from '@/components/mail/chips';
+import { CategoryPacks } from '@/components/category-packs';
 import { Card, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
 import { useCatalog } from '@/hooks/use-catalog';
 import { useTRPC, type Tag } from '@/lib/trpc';
@@ -28,7 +29,11 @@ export default function TagSettings() {
   const save = useMutation(trpc.catalog.saveTag.mutationOptions({ onSuccess: invalidate }));
   const remove = useMutation(trpc.catalog.removeTag.mutationOptions({ onSuccess: invalidate }));
   const restore = useMutation(trpc.catalog.restoreTag.mutationOptions({ onSuccess: invalidate }));
-  const { data: hidden } = useQuery(trpc.catalog.hiddenTags.queryOptions());
+  const { data: allHidden } = useQuery(trpc.catalog.hiddenTags.queryOptions());
+  const { data: packs } = useQuery(trpc.catalog.packs.queryOptions());
+  // Template categories not added yet are offered in « Modèles », not listed as removed.
+  const inPacks = new Set<string>(packs?.flatMap((p) => p.tags.map((x) => x.id)) ?? []);
+  const hidden = allHidden?.filter((tag) => !inPacks.has(tag.id));
   const retriage = useMutation(trpc.ai.retriageAll.mutationOptions({ onSuccess: (n) => toast.success(tp(n, '{n} mail en cours de reclassement', '{n} mails en cours de reclassement')) }));
   const system = catalog.tags.filter((tag) => tag.kind === 'system');
   const custom = catalog.tags.filter((tag) => tag.kind === 'custom');
@@ -85,6 +90,9 @@ export default function TagSettings() {
       </Card>
       <Card title={t('Catégories génériques')} description={t('Toujours disponibles pour le tri automatique.')}>
         <ul className="-my-1 divide-y divide-border">{system.map(row)}</ul>
+      </Card>
+      <Card title={t('Modèles de catégories')} description={t('Des catégories prêtes à l’emploi, perso ou pro. Ajoutez seulement celles qui vous servent : moins de catégories, moins de bruit.')}>
+        <CategoryPacks allTags={[...catalog.tags, ...(allHidden ?? [])]} />
       </Card>
       {hidden?.length ? (
         <Card title={t('Catégories supprimées')} description={t('Catégories génériques que vous avez retirées : l’IA ne les utilise plus.')}>

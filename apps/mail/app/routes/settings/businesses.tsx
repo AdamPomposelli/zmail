@@ -10,6 +10,7 @@ import { Textarea } from '@/components/ui/textarea';
 import { Card, ColorPicker, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
 import { useCatalog } from '@/hooks/use-catalog';
 import { useTRPC, type Business } from '@/lib/trpc';
+import { useSuggestBusinessPack } from '@/components/category-packs';
 import { PALETTE } from '@/lib/utils';
 import { t } from '@/lib/i18n';
 
@@ -34,7 +35,17 @@ export default function BusinessSettings() {
     void queryClient.invalidateQueries({ queryKey: trpc.mail.counts.queryKey() });
   };
   const reassign = useMutation(trpc.catalog.reassignBusinesses.mutationOptions({ onSuccess: invalidate }));
-  const save = useMutation(trpc.catalog.saveBusiness.mutationOptions({ onSuccess: () => (reassign.mutate(), invalidate()) }));
+  const suggestPack = useSuggestBusinessPack();
+  const save = useMutation(
+    trpc.catalog.saveBusiness.mutationOptions({
+      onSuccess: (_business, input) => {
+        reassign.mutate();
+        invalidate();
+        // A new business may need the business categories (opportunities, disputes, meetings).
+        if (!input.id) void suggestPack();
+      },
+    }),
+  );
   const remove = useMutation(trpc.catalog.removeBusiness.mutationOptions({ onSuccess: invalidate }));
 
   return (

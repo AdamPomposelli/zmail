@@ -217,4 +217,7 @@ export default {
   'Réponse introuvable': 'Reply not found',
   'Impossible de réécrire maintenant, réessayez.': 'Can’t rewrite right now, try again.',
   'La réponse est vide.': 'The reply is empty.',
+  'Autres notifications': 'Other notifications',
+  'Administratif': 'Admin & paperwork',
+  'Voyages': 'Travel',
 } satisfies Record<string, string>;

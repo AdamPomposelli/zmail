@@ -192,6 +192,10 @@ const catalogRouter = router({
   removeTag: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.catalog.removeTag(input.id)),
   hiddenTags: procedure.query(({ ctx }) => ctx.engine.catalog.hiddenTags()),
   restoreTag: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.catalog.restoreTag(input.id)),
+  usage: procedure.query(({ ctx }) => ctx.engine.catalog.usage()),
+  setUsage: procedure.input(z.object({ usage: z.enum(['personal', 'business', 'both']) })).mutation(({ ctx, input }) => ctx.engine.catalog.applyUsage(input.usage)),
+  packs: procedure.query(({ ctx }) => ctx.engine.catalog.packs()),
+  addPack: procedure.input(z.object({ id: z.enum(['personal', 'business']) })).mutation(({ ctx, input }) => ctx.engine.catalog.addPack(input.id)),
 });
 
 const rulesRouter = router({

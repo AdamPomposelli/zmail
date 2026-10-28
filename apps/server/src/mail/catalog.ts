@@ -1,5 +1,5 @@
 import type { Database } from '../db';
-import { SYSTEM_TAGS } from '../ai/taxonomy';
+import { PACK_EXTRAS, PREVIOUS_DESCRIPTIONS, RENAMED_TAGS, SYSTEM_TAGS, packFor, scopeTags, type Usage } from '../ai/taxonomy';
 import { domainOf, type Address } from '../lib/address';
 import { newId } from '../lib/ids';
 import { t } from '../lib/i18n';
@@ -39,9 +39,14 @@ export class Catalog {
   constructor(private readonly db: Database) {}
 
   seed() {
-    SYSTEM_TAGS.forEach((tag, sort) =>
+    const existing = new Set(this.db.all<{ id: string }>('SELECT id FROM tags').map((r) => r.id));
+    const upgrade = existing.size > 0;
+    SYSTEM_TAGS.forEach((tag, sort) => {
+      if (existing.has(tag.id)) return;
+      // A category added by an update stays a template on an existing install: nothing new
+      // appears in the sidebar unasked (Settings → Categories offers it).
       this.db.run(
-        `INSERT OR IGNORE INTO tags (id, name, color, description, kind, icon, sort, created_at) VALUES (?, ?, ?, ?, 'system', ?, ?, ?)`,
+        `INSERT INTO tags (id, name, color, description, kind, icon, sort, created_at, hidden) VALUES (?, ?, ?, ?, 'system', ?, ?, ?, ?)`,
         tag.id,
         tag.name,
         tag.color,
@@ -49,8 +54,57 @@ export class Catalog {
         tag.icon,
         sort,
         Date.now(),
-      ),
-    );
+        upgrade ? 1 : 0,
+      );
+    });
+    for (const tag of SYSTEM_TAGS) {
+      const renamed = RENAMED_TAGS[tag.id];
+      if (renamed) this.db.run(`UPDATE tags SET name = ? WHERE id = ? AND kind = 'system' AND name = ?`, renamed.to, tag.id, renamed.from);
+      // The built-in scopes are ZMail's: refresh them unless the user rewrote them.
+      for (const previous of PREVIOUS_DESCRIPTIONS[tag.id] ?? []) this.db.run(`UPDATE tags SET description = ? WHERE id = ? AND kind = 'system' AND description = ?`, tag.description, tag.id, previous);
+    }
+    // Once: mails sorted before « one topic per mail » lose their pile-ups.
+    if (!this.db.getSetting<boolean>('tags:scoped:v1', false)) {
+      const rows = this.db.all<{ message_id: string; tags: string; otp: string | null }>("SELECT message_id, tags, otp FROM triage WHERE json_array_length(tags) > 1");
+      this.db.tx(() => {
+        for (const row of rows) {
+          const tags = JSON.parse(row.tags) as string[];
+          const scoped = scopeTags(tags, { securityStrong: Boolean(row.otp) });
+          if (scoped.length !== tags.length) this.db.run('UPDATE triage SET tags = ? WHERE message_id = ?', JSON.stringify(scoped), row.message_id);
+        }
+      });
+      this.db.setSetting('tags:scoped:v1', true);
+    }
+  }
+
+  /** What the user said ZMail is for (onboarding); unknown means everything (« both »). */
+  usage(): Usage | null {
+    return this.db.getSetting<Usage | null>('catalog.usage', null);
+  }
+
+  /** Shows the categories of that use and hides the built-in ones it does not need. */
+  applyUsage(usage: Usage) {
+    const pack = packFor(usage);
+    this.db.tx(() => {
+      for (const tag of SYSTEM_TAGS) this.db.run('UPDATE tags SET hidden = ? WHERE id = ?', pack.has(tag.id) ? 0 : 1, tag.id);
+    });
+    this.db.setSetting('catalog.usage', usage);
+  }
+
+  /** The category templates (personal, business) and which of their categories are not in use yet. */
+  packs() {
+    const hidden = new Set(this.hiddenTags().map((t) => t.id));
+    return (Object.keys(PACK_EXTRAS) as (keyof typeof PACK_EXTRAS)[]).map((id) => ({
+      id,
+      tags: PACK_EXTRAS[id].map((tagId) => ({ id: tagId, missing: hidden.has(tagId) })),
+      missing: PACK_EXTRAS[id].filter((tagId) => hidden.has(tagId)).length,
+    }));
+  }
+
+  addPack(id: keyof typeof PACK_EXTRAS) {
+    for (const tagId of PACK_EXTRAS[id]) this.restoreTag(tagId);
+    const usage = this.usage();
+    if (usage && usage !== id && usage !== 'both') this.db.setSetting('catalog.usage', 'both');
   }
 
   // ── Businesses ───────────────────────────────────────────────────────────────

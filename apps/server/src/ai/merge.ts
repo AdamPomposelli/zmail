@@ -2,6 +2,7 @@ import type { Priority } from '../types';
 import type { HeuristicResult } from './heuristics';
 import { validateOtp } from './otp';
 import { t } from '../lib/i18n';
+import { scopeTags } from './taxonomy';
 
 export type ModelTriage = {
   tags?: unknown;
@@ -97,5 +98,8 @@ export function mergeTriage(input: {
   if (priority >= 2 && !spam && !tags.includes('important') && !otp) tags.push('important');
   if (priority < 2) tags = tags.filter((t) => t !== 'important');
 
-  return { tags: [...new Set(tags)], priority, spam, spamReason, opportunity, opportunityReason, otp, summary };
+  // One topic per mail, no pile-ups like « Facture + Notification + Sécurité ».
+  tags = scopeTags(tags, { securityStrong: Boolean(otp) });
+
+  return { tags, priority, spam, spamReason, opportunity, opportunityReason, otp, summary };
 }
