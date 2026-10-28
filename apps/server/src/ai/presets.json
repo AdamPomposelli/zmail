@@ -1,0 +1,66 @@
+{
+  "generatedAt": "2026-10-27T23:58:39.062Z",
+  "dataset": 85,
+  "localTriageScore": 92.4,
+  "apple": {
+    "triageFormat": "atomic",
+    "triage": {
+      "score": 81.9,
+      "latencyP50": 16207
+    },
+    "chat": {
+      "score": 100,
+      "latencyP50": 2027
+    }
+  },
+  "presets": {
+    "free": {
+      "score": 98.3,
+      "latencyP50": 2513,
+      "costPer1k": 0,
+      "details": {
+        "priority": 96.5,
+        "spam": 97.6,
+        "opportunity": 98.8,
+        "otp": 100,
+        "tags": 100
+      },
+      "models": [
+        "inclusionai/ling-3.1-flash"
+      ]
+    },
+    "balanced": {
+      "score": 98.8,
+      "latencyP50": 412,
+      "costPer1k": 0.0852,
+      "details": {
+        "priority": 96.5,
+        "spam": 100,
+        "opportunity": 100,
+        "otp": 100,
+        "tags": 98.8
+      },
+      "models": [
+        "typesafe/jev-1.13",
+        "deepseek/deepseek-v4.1-flash"
+      ]
+    },
+    "max": {
+      "score": 99.2,
+      "latencyP50": 1827,
+      "costPer1k": 0.2335,
+      "details": {
+        "priority": 97.6,
+        "spam": 100,
+        "opportunity": 100,
+        "otp": 100,
+        "tags": 99.4
+      },
+      "models": [
+        "typesafe/jev-1.13",
+        "deepseek/deepseek-v4.1-flash",
+        "anthropic/claude-haiku-5.5"
+      ]
+    }
+  }
+}

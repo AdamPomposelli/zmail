@@ -1,0 +1,9 @@
+{
+  "extends": "@zmail/tsconfig/base",
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "types": ["node"],
+    "checkJs": false
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts", "bench/**/*.ts"]
+}

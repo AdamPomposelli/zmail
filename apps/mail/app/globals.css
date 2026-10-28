@@ -1,0 +1,436 @@
+@import '@fontsource-variable/geist' layer(base);
+@import '@fontsource-variable/geist-mono' layer(base);
+
+/*
+  Automatic source detection should suffice, but for more control, check
+  the docs on Detecting classes in source files, namely `source(none)`:
+  https://tailwindcss.com/docs/detecting-classes-in-source-files
+*/
+@import 'tailwindcss';
+
+/* Plugins */
+@plugin "tailwindcss-animate";
+@plugin "@tailwindcss/typography";
+@plugin "tailwind-scrollbar" {
+  nocompatible: true;
+  preferredstrategy: 'pseudoelements';
+}
+
+/* Custom variant for dark mode */
+@custom-variant dark (&:where(.dark, .dark *));
+
+:root {
+  /*
+    Theme tokens, in the exact format of shadcn/ui and tweakcn.com: a theme is only these
+    variables. Every component reads them through Tailwind (bg-background, text-primary,
+    border-border, rounded-lg, shadow-sm, font-sans…), so switching theme restyles the whole app.
+    These are the "ZMail" defaults; lib/themes injects the chosen preset over them.
+  */
+  --background: #ffffff;
+  --foreground: #0a0a0b;
+  --card: #ffffff;
+  --card-foreground: #0a0a0b;
+  --popover: #ffffff;
+  --popover-foreground: #0a0a0b;
+  --primary: #006ffe;
+  --primary-foreground: #ffffff;
+  --secondary: #f4f4f5;
+  --secondary-foreground: #18181b;
+  --muted: #f4f4f5;
+  --muted-foreground: #71717a;
+  --accent: #f0f0f2;
+  --accent-foreground: #18181b;
+  --destructive: #e5484d;
+  --destructive-foreground: #ffffff;
+  --border: #e7e7ea;
+  --input: #e4e4e7;
+  --ring: #006ffe;
+  --chart-1: #006ffe;
+  --chart-2: #10b981;
+  --chart-3: #f59e0b;
+  --chart-4: #8b5cf6;
+  --chart-5: #f43f5e;
+  --sidebar: #f7f7f8;
+  --sidebar-foreground: #3f3f46;
+  --sidebar-primary: #006ffe;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #ececef;
+  --sidebar-accent-foreground: #18181b;
+  --sidebar-border: #e4e4e7;
+  --sidebar-ring: #006ffe;
+  --font-sans: 'Geist Variable', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif;
+  --font-serif: ui-serif, Georgia, serif;
+  --font-mono: 'Geist Mono Variable', 'Geist Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+  --radius: 0.625rem;
+  --letter-spacing: 0em;
+  --spacing: 0.25rem;
+  --shadow-color: #000000;
+  --shadow-opacity: 0.06;
+  --shadow-blur: 3px;
+  --shadow-spread: 0px;
+  --shadow-offset-x: 0px;
+  --shadow-offset-y: 1px;
+
+  /* App semantics that themes do not define: status colours and the AI accent. */
+  --success: #10b981;
+  --success-foreground: #ffffff;
+  --warning: #f59e0b;
+  --warning-foreground: #ffffff;
+  --ai: var(--primary);
+  --ai-foreground: var(--primary-foreground);
+
+  /* Set by the macOS app: the window's corner radius, so edge panels stay concentric. */
+  --window-radius: 16px;
+  --window-gap: 8px;
+}
+
+.dark {
+  --background: #1a1a1b;
+  --foreground: #f4f4f5;
+  --card: #202022;
+  --card-foreground: #f4f4f5;
+  --popover: #1e1e20;
+  --popover-foreground: #f4f4f5;
+  --primary: #2f86ff;
+  --primary-foreground: #ffffff;
+  --secondary: #27272a;
+  --secondary-foreground: #f4f4f5;
+  --muted: #252527;
+  --muted-foreground: #a1a1aa;
+  --accent: #29292c;
+  --accent-foreground: #f4f4f5;
+  --destructive: #f2555a;
+  --destructive-foreground: #ffffff;
+  --border: #2c2c2f;
+  --input: #303033;
+  --ring: #2f86ff;
+  --sidebar: #131314;
+  --sidebar-foreground: #d4d4d8;
+  --sidebar-primary: #2f86ff;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #242426;
+  --sidebar-accent-foreground: #f4f4f5;
+  --sidebar-border: #232325;
+  --sidebar-ring: #2f86ff;
+  --shadow-opacity: 0.3;
+  --success: #34d399;
+  --success-foreground: #052e1c;
+  --warning: #fbbf24;
+  --warning-foreground: #2b1d03;
+}
+
+/* Shadows derived from the theme's shadow settings, the way tweakcn computes them. */
+:root,
+.dark {
+  --shadow-2xs: var(--shadow-offset-x) var(--shadow-offset-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 50%), transparent);
+  --shadow-xs: var(--shadow-2xs);
+  --shadow-sm: var(--shadow-offset-x) var(--shadow-offset-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent),
+    var(--shadow-offset-x) 1px 2px calc(var(--shadow-spread) - 1px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow: var(--shadow-sm);
+  --shadow-md: var(--shadow-offset-x) var(--shadow-offset-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent),
+    var(--shadow-offset-x) 2px 4px calc(var(--shadow-spread) - 1px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-lg: var(--shadow-offset-x) var(--shadow-offset-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent),
+    var(--shadow-offset-x) 4px 6px calc(var(--shadow-spread) - 1px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-xl: var(--shadow-offset-x) var(--shadow-offset-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent),
+    var(--shadow-offset-x) 8px 10px calc(var(--shadow-spread) - 1px) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 100%), transparent);
+  --shadow-2xl: var(--shadow-offset-x) var(--shadow-offset-y) var(--shadow-blur) var(--shadow-spread) color-mix(in srgb, var(--shadow-color) calc(var(--shadow-opacity) * 250%), transparent);
+}
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-destructive-foreground: var(--destructive-foreground);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+  --color-success: var(--success);
+  --color-success-foreground: var(--success-foreground);
+  --color-warning: var(--warning);
+  --color-warning-foreground: var(--warning-foreground);
+  --color-ai: var(--ai);
+  --color-ai-foreground: var(--ai-foreground);
+
+  --font-sans: var(--font-sans);
+  --font-serif: var(--font-serif);
+  --font-mono: var(--font-mono);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+  /* Panels touching the window edge: concentric with the macOS window corner. */
+  --radius-panel: max(calc(var(--window-radius) - var(--window-gap)), 6px);
+
+  --shadow-2xs: var(--shadow-2xs);
+  --shadow-xs: var(--shadow-xs);
+  --shadow-sm: var(--shadow-sm);
+  --shadow: var(--shadow);
+  --shadow-md: var(--shadow-md);
+  --shadow-lg: var(--shadow-lg);
+  --shadow-xl: var(--shadow-xl);
+  --shadow-2xl: var(--shadow-2xl);
+
+  --tracking-normal: var(--letter-spacing);
+
+}
+
+/* Add scrollbar styling */
+@utility style-scrollbar {
+  @apply scrollbar scrollbar-w-0 scrollbar-thumb-accent/40 scrollbar-track-transparent hover:scrollbar-thumb-accent scrollbar-thumb-rounded-full;
+}
+
+
+@layer base {
+  * {
+    @apply border-border;
+  }
+  body {
+    @apply bg-background text-foreground style-scrollbar overscroll-none font-sans;
+  }
+}
+
+.ProseMirror {
+  @apply outline-none;
+}
+
+.tiptap p {
+  margin-bottom: 0.3rem;
+}
+
+/* Premium, thinner line icons everywhere (lucide sets stroke-width as an attribute). */
+.lucide {
+  stroke-width: 1.6;
+}
+
+/* Mail checkbox (thread-row): pop-in disc, self-drawing tick, outgoing ripple. */
+.zm-check {
+  animation: zm-check-pop 320ms cubic-bezier(0.2, 1.5, 0.4, 1);
+}
+.zm-check::after {
+  content: '';
+  position: absolute;
+  inset: -2px;
+  border-radius: 999px;
+  box-shadow: 0 0 0 0 color-mix(in srgb, var(--primary) 55%, transparent);
+  animation: zm-check-ripple 520ms ease-out;
+  pointer-events: none;
+}
+.zm-check-tick {
+  stroke-dasharray: 22;
+  stroke-dashoffset: 22;
+  animation: zm-check-draw 260ms 90ms ease-out forwards;
+}
+@keyframes zm-check-pop {
+  0% { transform: scale(0.55) rotate(-25deg); opacity: 0.4; }
+  100% { transform: none; opacity: 1; }
+}
+@keyframes zm-check-ripple {
+  to { box-shadow: 0 0 0 9px color-mix(in srgb, var(--primary) 0%, transparent); }
+}
+@keyframes zm-check-draw {
+  to { stroke-dashoffset: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zm-check, .zm-check::after { animation: none; }
+  .zm-check-tick { animation: none; stroke-dashoffset: 0; }
+}
+
+/* Zippy suite (components/zippy): brand colours are data, carried by --app / --zippy. */
+.zippy-hero-glow {
+  background: radial-gradient(closest-side, color-mix(in srgb, var(--zippy) 28%, transparent), transparent);
+  filter: blur(20px);
+  animation: zippy-breathe 6s ease-in-out infinite;
+}
+@keyframes zippy-breathe {
+  50% { opacity: 0.6; transform: translateX(-50%) scale(1.08); }
+}
+.zippy-stack {
+  opacity: 0;
+  transform: translateY(6px) scale(0.9);
+  animation: zippy-rise 520ms cubic-bezier(0.22, 1.4, 0.36, 1) forwards;
+  animation-delay: calc(120ms + var(--i) * 55ms);
+}
+.zippy-card {
+  opacity: 0;
+  transform: translateY(8px);
+  animation: zippy-rise 560ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(180ms + var(--i) * 60ms);
+}
+.zippy-card:hover {
+  border-color: color-mix(in srgb, var(--app) 45%, var(--border));
+  box-shadow: 0 10px 30px -12px color-mix(in srgb, var(--app) 45%, transparent);
+}
+.zippy-card-glow {
+  background: radial-gradient(420px circle at 0% 0%, color-mix(in srgb, var(--app) 12%, transparent), transparent 60%);
+}
+.zippy-card-focus {
+  border-color: color-mix(in srgb, var(--app) 55%, var(--border));
+}
+@keyframes zippy-rise {
+  to { opacity: 1; transform: none; }
+}
+/* Inbox row: a slow sheen across the suite icons. */
+.zippy-sheen {
+  background: linear-gradient(105deg, transparent 40%, color-mix(in srgb, var(--zippy, #fd730c) 12%, transparent) 50%, transparent 60%);
+  background-size: 250% 100%;
+  animation: zippy-sheen 5s ease-in-out infinite;
+}
+@keyframes zippy-sheen {
+  from { background-position: 120% 0; }
+  to { background-position: -120% 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zippy-card, .zippy-stack { animation: none; opacity: 1; transform: none; }
+  .zippy-hero-glow, .zippy-sheen { animation: none; }
+}
+
+/* Composer assistant: a ring that breathes with the voice level (--level, 0…1). */
+.zm-mic-ring {
+  position: absolute;
+  inset: -4px;
+  border-radius: 999px;
+  border: 2px solid color-mix(in srgb, var(--ai) 45%, transparent);
+  transform: scale(calc(1 + var(--level, 0) * 0.35));
+  opacity: calc(0.35 + var(--level, 0) * 0.65);
+  transition: transform 80ms linear, opacity 80ms linear;
+  pointer-events: none;
+}
+
+/* A conversation unfolding into its reply tree, under its row. */
+@keyframes zm-unfold {
+  from {
+    opacity: 0;
+    transform: translateY(-4px);
+  }
+}
+.zm-unfold {
+  animation: zm-unfold 180ms cubic-bezier(0.2, 0.8, 0.2, 1);
+}
+@media (prefers-reduced-motion: reduce) {
+  .zm-unfold {
+    animation: none;
+  }
+}
+
+/* The message picked in the reply tree, brought into view in the reader. */
+@keyframes zm-focus-message {
+  0%,
+  40% {
+    box-shadow: 0 0 0 2px var(--ring);
+  }
+}
+.zm-focus-message {
+  animation: zm-focus-message 1.6s ease-out;
+}
+
+/* The IA button, next to « Nouveau message »: a black key lit by a slowly turning RGB ring and
+   glow, in the colours of the boot screen and Apple Intelligence. Hover speeds it up and
+   brightens it; open (chat visible) keeps it lit. */
+@property --zm-ai-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+.zm-ai-btn {
+  --zm-ai-colors: #2f86ff, #8b5cf6, #ec4899, #f97316, #22d3ee, #2f86ff;
+  position: relative;
+  isolation: isolate;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 2.25rem;
+  width: 2.5rem;
+  flex-shrink: 0;
+  border-radius: 0.5rem;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  background:
+    radial-gradient(120% 90% at 0% 0%, color-mix(in srgb, #8b5cf6 26%, transparent), transparent 60%),
+    radial-gradient(120% 90% at 100% 100%, color-mix(in srgb, #f97316 20%, transparent), transparent 60%),
+    radial-gradient(90% 90% at 100% 0%, color-mix(in srgb, #22d3ee 16%, transparent), transparent 60%),
+    #0b0b0d;
+  animation: zm-ai-spin 6s linear infinite;
+  transition: transform 160ms ease;
+}
+/* The ring: a conic gradient shown only on the border (mask). */
+.zm-ai-btn::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  padding: 1.5px;
+  border-radius: inherit;
+  background: conic-gradient(from var(--zm-ai-angle), var(--zm-ai-colors));
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  pointer-events: none;
+}
+/* The glow: the same colours, blurred behind the key. */
+.zm-ai-btn::after {
+  content: '';
+  position: absolute;
+  inset: -3px;
+  z-index: -1;
+  border-radius: inherit;
+  background: conic-gradient(from var(--zm-ai-angle), var(--zm-ai-colors));
+  filter: blur(9px);
+  opacity: 0.45;
+  transition: opacity 200ms ease, filter 200ms ease;
+  pointer-events: none;
+}
+.zm-ai-btn:hover {
+  animation-duration: 2.4s;
+  transform: translateY(-0.5px);
+}
+.zm-ai-btn:hover::after,
+.zm-ai-btn[data-open='true']::after {
+  opacity: 0.85;
+  filter: blur(12px);
+}
+.zm-ai-btn:active {
+  transform: scale(0.97);
+}
+.zm-ai-btn:focus-visible {
+  outline: 2px solid color-mix(in srgb, #8b5cf6 70%, transparent);
+  outline-offset: 2px;
+}
+.zm-ai-btn > span {
+  background: linear-gradient(180deg, #fff, color-mix(in srgb, #fff 82%, #c4b5fd));
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+}
+@keyframes zm-ai-spin {
+  to { --zm-ai-angle: 360deg; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zm-ai-btn { animation: none; }
+}

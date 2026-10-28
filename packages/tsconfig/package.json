@@ -1,0 +1,7 @@
+{
+  "name": "@zmail/tsconfig",
+  "private": true,
+  "exports": {
+    "./base": "./base.json"
+  }
+}

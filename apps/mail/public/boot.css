@@ -1,0 +1,368 @@
+/*
+  ZMail boot skeleton. Shared by public/boot.html (shown by the macOS app while the engine
+  starts, no JS framework, file://) and the React app's first paint (components/boot-screen.tsx),
+  so the hand-off between the two is pixel-identical. Colours read the theme tokens when they
+  exist (inside the app) and fall back to the ZMail defaults (boot page).
+*/
+.zb {
+  --zb-sidebar: var(--sidebar, #f7f7f8);
+  --zb-panel: var(--background, #ffffff);
+  --zb-border: var(--border, #e7e7ea);
+  --zb-fg: var(--foreground, #0a0a0b);
+  --zb-glow: 1;
+  --zb-muted: var(--muted-foreground, #71717a);
+  --zb-a: var(--primary, #006ffe);
+  --zb-b: #8b5cf6;
+  --zb-c: #22d3ee;
+  --zb-radius: max(calc(var(--window-radius, 16px) - var(--window-gap, 8px)), 6px);
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  display: flex;
+  background: var(--zb-sidebar);
+  color: var(--zb-fg);
+  font: 13px/1.4 var(--font-sans, 'Geist Variable', 'Geist', -apple-system, BlinkMacSystemFont, 'Segoe UI', system-ui, sans-serif);
+  -webkit-font-smoothing: antialiased;
+  overflow: hidden;
+  transition: opacity 420ms cubic-bezier(0.22, 1, 0.36, 1), filter 420ms ease;
+  cursor: progress;
+  user-select: none;
+}
+@media (prefers-color-scheme: dark) {
+  .zb:not(.zb-light) {
+    --zb-sidebar: var(--sidebar, #131314);
+    --zb-panel: var(--background, #1a1a1b);
+    --zb-border: var(--border, #2c2c2f);
+    --zb-fg: var(--foreground, #f4f4f5);
+    --zb-muted: var(--muted-foreground, #a1a1aa);
+    --zb-a: var(--primary, #2f86ff);
+    --zb-glow: 1.6;
+  }
+}
+/* Inside the app the mode is a class, not the system setting. */
+.dark .zb {
+  --zb-glow: 1.6;
+}
+html:not(.dark).light .zb {
+  --zb-glow: 1;
+}
+/* Bone tones follow the resolved foreground, in both modes. */
+.zb {
+  --zb-bone: color-mix(in srgb, var(--zb-fg) 7%, transparent);
+  --zb-bone-strong: color-mix(in srgb, var(--zb-fg) 11%, transparent);
+}
+.zb.zb-done {
+  opacity: 0;
+  filter: blur(6px);
+  pointer-events: none;
+}
+
+/* Bones: a flat tone, swept by one continuous iridescent light across the whole window. */
+.zb-bone {
+  border-radius: 6px;
+  background-color: var(--zb-bone);
+  background-image: linear-gradient(
+    105deg,
+    transparent 0%,
+    transparent 43%,
+    color-mix(in srgb, var(--zb-a) calc(var(--zb-glow) * 9%), transparent) 47.5%,
+    color-mix(in srgb, var(--zb-b) calc(var(--zb-glow) * 11%), transparent) 50%,
+    color-mix(in srgb, var(--zb-c) calc(var(--zb-glow) * 7%), transparent) 52.5%,
+    transparent 57%,
+    transparent 100%
+  );
+  background-size: 220vw 100%;
+  background-attachment: fixed;
+  animation: zb-sweep 2.6s cubic-bezier(0.45, 0, 0.25, 1) infinite;
+}
+.zb-bone.strong {
+  background-color: var(--zb-bone-strong);
+}
+.zb-round {
+  border-radius: 999px;
+}
+@keyframes zb-sweep {
+  from {
+    background-position: 110vw 0;
+  }
+  to {
+    background-position: -110vw 0;
+  }
+}
+
+/* Rows appear one after the other, like content being written in. */
+.zb-in {
+  opacity: 0;
+  transform: translateY(4px);
+  animation: zb-in 640ms cubic-bezier(0.22, 1, 0.36, 1) forwards;
+  animation-delay: calc(var(--i, 0) * 55ms + 80ms);
+}
+@keyframes zb-in {
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* Sidebar */
+.zb-side {
+  width: 252px;
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  padding: 0 12px;
+}
+.zb-top {
+  height: 48px;
+  display: flex;
+  align-items: flex-end;
+  justify-content: flex-end;
+  padding-bottom: 6px;
+}
+.zb-compose {
+  height: 36px;
+  margin-top: 4px;
+  border-radius: 9px;
+  background: var(--zb-panel);
+  border: 1px solid var(--zb-border);
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 12px;
+}
+.zb-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  margin-top: 14px;
+}
+.zb-row {
+  height: 28px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 0 8px;
+}
+.zb-label {
+  margin: 18px 8px 6px;
+}
+
+/* Main panel */
+.zb-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  padding: var(--window-gap, 8px) var(--window-gap, 8px) var(--window-gap, 8px) 0;
+}
+.zb-panel {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  overflow: hidden;
+  border-radius: var(--zb-radius);
+  background: var(--zb-panel);
+  border: 1px solid var(--zb-border);
+}
+.zb-list {
+  width: 36%;
+  min-width: 300px;
+  max-width: 440px;
+  border-right: 1px solid var(--zb-border);
+  padding: 16px 14px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.zb-mail {
+  display: flex;
+  gap: 12px;
+  padding: 12px 8px;
+}
+.zb-mail .zb-lines {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.zb-chips {
+  display: flex;
+  gap: 6px;
+  margin-top: 2px;
+}
+
+/* Reading pane: the "magic" moment, an aurora behind the status. */
+.zb-stage {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  overflow: hidden;
+}
+.zb-aurora {
+  position: absolute;
+  width: 560px;
+  height: 560px;
+  border-radius: 50%;
+  background: conic-gradient(from 0deg, var(--zb-a), var(--zb-b), var(--zb-c), var(--zb-a));
+  filter: blur(90px);
+  opacity: calc(var(--zb-glow) * 0.09);
+  animation: zb-spin 14s linear infinite, zb-breathe 5s ease-in-out infinite;
+}
+@keyframes zb-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@keyframes zb-breathe {
+  50% {
+    opacity: calc(var(--zb-glow) * 0.14);
+    scale: 1.08;
+  }
+}
+.zb-core {
+  position: relative;
+  width: min(340px, 80%);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  text-align: center;
+}
+.zb-mark {
+  position: relative;
+  width: 44px;
+  height: 44px;
+  border-radius: 22.5%;
+  box-shadow: 0 8px 20px rgba(10, 16, 36, 0.16), 0 2px 6px rgba(10, 16, 36, 0.1);
+}
+.zb-mark img {
+  display: block;
+  width: 100%;
+  height: 100%;
+  border-radius: inherit;
+}
+.zb-mark::after {
+  content: '';
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  padding: 1px;
+  background: conic-gradient(from var(--zb-angle, 0deg), transparent 0 65%, var(--zb-a), var(--zb-b), transparent 85%);
+  -webkit-mask: linear-gradient(#000 0 0) content-box, linear-gradient(#000 0 0);
+  -webkit-mask-composite: xor;
+  mask-composite: exclude;
+  animation: zb-orbit 2.2s linear infinite;
+}
+@property --zb-angle {
+  syntax: '<angle>';
+  inherits: false;
+  initial-value: 0deg;
+}
+@keyframes zb-orbit {
+  to {
+    --zb-angle: 360deg;
+  }
+}
+.zb-title {
+  margin-top: 18px;
+  font-size: 15px;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+.zb-status {
+  position: relative;
+  height: 18px;
+  width: 100%;
+  margin-top: 6px;
+  color: var(--zb-muted);
+  font-size: 12.5px;
+}
+.zb-status span {
+  position: absolute;
+  inset: 0;
+  transition: opacity 360ms ease, transform 360ms cubic-bezier(0.22, 1, 0.36, 1), filter 360ms ease;
+}
+.zb-status span.out {
+  opacity: 0;
+  transform: translateY(-6px);
+  filter: blur(3px);
+}
+.zb-status span.pre {
+  opacity: 0;
+  transform: translateY(6px);
+  filter: blur(3px);
+}
+.zb-track {
+  position: relative;
+  width: 100%;
+  height: 3px;
+  margin-top: 18px;
+  border-radius: 99px;
+  background: var(--zb-bone);
+  overflow: visible;
+}
+.zb-fill {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  border-radius: inherit;
+  background: linear-gradient(90deg, var(--zb-a), var(--zb-b), var(--zb-c));
+  background-size: 200% 100%;
+  animation: zb-flow 2.4s linear infinite;
+  transition: width 700ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+.zb-fill::after {
+  content: '';
+  position: absolute;
+  right: -4px;
+  top: 50%;
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  translate: 0 -50%;
+  background: var(--zb-c);
+  filter: blur(4px);
+  opacity: 0.9;
+}
+@keyframes zb-flow {
+  to {
+    background-position: -200% 0;
+  }
+}
+.zb-meta {
+  display: flex;
+  justify-content: space-between;
+  width: 100%;
+  margin-top: 8px;
+  color: var(--zb-muted);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  opacity: 0.8;
+}
+.zb-error {
+  margin-top: 14px;
+  color: var(--destructive, #e5484d);
+  font-size: 12px;
+  line-height: 1.5;
+  user-select: text;
+  cursor: text;
+}
+@media (max-width: 760px) {
+  .zb-list {
+    display: none;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .zb-bone,
+  .zb-aurora,
+  .zb-fill,
+  .zb-mark::after {
+    animation: none;
+  }
+  .zb-in {
+    animation-duration: 1ms;
+  }
+}

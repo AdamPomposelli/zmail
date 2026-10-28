@@ -1,0 +1,16 @@
+# Local IMAP/SMTP server for end-to-end tests and demos (no real mailbox needed).
+# Users are created on the fly: any address, password = the address.
+services:
+  greenmail:
+    image: greenmail/standalone:2.1.3
+    environment:
+      GREENMAIL_OPTS: >-
+        -Dgreenmail.setup.test.all
+        -Dgreenmail.hostname=0.0.0.0
+        -Dgreenmail.auth.disabled
+        -Dgreenmail.verbose=false
+    ports:
+      - '127.0.0.1:3025:3025'
+      - '127.0.0.1:3143:3143'
+      - '127.0.0.1:3465:3465'
+      - '127.0.0.1:3993:3993'

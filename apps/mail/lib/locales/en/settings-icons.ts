@@ -1,0 +1,20 @@
+// English translations, keyed by the French text (see lib/i18n.ts).
+export default {
+  'Icônes': 'Icons',
+  'La bibliothèque d’icônes de toute l’application : barre latérale, catégories, réglages. Toutes gratuites et libres.': 'The icon library for the whole app: sidebar, categories, settings. All free and open.',
+  'par défaut': 'default',
+  'Aperçu des icônes : {name} — cliquez pour l’appliquer.': 'Icon preview: {name} — click to apply.',
+  'Contour arrondi, doux et lisible': 'Rounded outline, soft and legible',
+  'Trait fin uniforme, très sobre': 'Even thin stroke, very plain',
+  'Contour et aplat léger, premium': 'Outline with a light fill, premium',
+  'Le plus dépouillé, le moins de traits': 'The barest, fewest strokes',
+  'Formes pures, trait régulier': 'Pure shapes, even stroke',
+  'Arrondi, détails réduits': 'Rounded, minimal detail',
+  'L’ancêtre de Lucide, encore plus simple': 'Lucide’s ancestor, even simpler',
+  'Sobre et rond, façon Windows 11': 'Plain and round, Windows 11 style',
+  'Petit, compact, minimaliste': 'Small, compact, minimal',
+  'Pleins doux à deux tons': 'Soft two-tone fills',
+  'Bibliothèque d’icônes': 'Icon library',
+  'Akar, Lucide, Phosphor, Iconoir…': 'Akar, Lucide, Phosphor, Iconoir…',
+  'icônes icones pictogrammes bibliothèque style akar lucide phosphor iconoir feather solar duotone contour': 'icons pictograms library style akar lucide phosphor iconoir feather solar duotone outline',
+} satisfies Record<string, string>;

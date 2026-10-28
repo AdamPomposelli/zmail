@@ -1,0 +1,386 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>ZMail demo</title>
+<script src="assets/gsap.min.js"></script>
+<style>
+@font-face { font-family: "PJS"; font-weight: 500; src: url(assets/fonts/PlusJakartaSans-500.woff2) format("woff2"); }
+@font-face { font-family: "PJS"; font-weight: 700; src: url(assets/fonts/PlusJakartaSans-700.woff2) format("woff2"); }
+@font-face { font-family: "PJS"; font-weight: 800; src: url(assets/fonts/PlusJakartaSans-800.woff2) format("woff2"); }
+@font-face { font-family: "JBM"; font-weight: 400; src: url(assets/fonts/JetBrainsMono-400.woff2) format("woff2"); }
+:root { --ink: #08070A; --red: #FC2832; --red-d: #EB030E; --red-l: #FF8A8F; }
+* { box-sizing: border-box; }
+html, body { margin: 0; width: 1920px; height: 1080px; overflow: hidden; background: var(--ink); color: #fff; font-family: "PJS", sans-serif; }
+#root { position: relative; width: 1920px; height: 1080px; overflow: hidden; background: var(--ink); }
+.layer { position: absolute; inset: 0; }
+.scene { position: absolute; inset: 0; overflow: hidden; }
+.wrap { position: absolute; inset: 0; }
+
+#dots { background-image: radial-gradient(rgba(255,255,255,.13) 1.6px, transparent 1.8px); background-size: 48px 48px; opacity: .5; }
+#glow { background: radial-gradient(ellipse 46% 40% at 50% 46%, rgba(252,40,50,.40), rgba(252,40,50,.09) 55%, transparent 75%); }
+#vignette { background: radial-gradient(ellipse at center, transparent 45%, rgba(0,0,0,.75) 100%); pointer-events: none; z-index: 40; }
+#grain { z-index: 41; opacity: .06; background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='240' height='240'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='100%' height='100%' filter='url(%23n)'/></svg>"); }
+#flash { z-index: 45; background: #fff; opacity: 0; }
+
+#hud { z-index: 50; mix-blend-mode: difference; font: 400 24px/1 "JBM", monospace; letter-spacing: .18em; color: #fff; text-transform: uppercase; }
+.crop { position: absolute; width: 44px; height: 44px; border: 0 solid rgba(255,255,255,.75); }
+.crop.tl { top: 36px; left: 36px; border-top-width: 2px; border-left-width: 2px; }
+.crop.tr { top: 36px; right: 36px; border-top-width: 2px; border-right-width: 2px; }
+.crop.bl { bottom: 36px; left: 36px; border-bottom-width: 2px; border-left-width: 2px; }
+.crop.br { bottom: 36px; right: 36px; border-bottom-width: 2px; border-right-width: 2px; }
+#hud-chapter { position: absolute; bottom: 52px; right: 104px; }
+#ruler { position: absolute; bottom: 60px; left: 104px; width: 560px; height: 4px; display: flex; gap: 10px; }
+#ruler span { flex: 1; background: rgba(255,255,255,.25); position: relative; overflow: hidden; }
+#ruler span b { position: absolute; inset: 0; background: #fff; transform-origin: 0 50%; transform: scaleX(0); }
+
+/* ── The real app: full-window captures (1920×1080 CSS px, shot at 2×) the camera moves over ── */
+#stage { position: absolute; inset: 0; }
+#camera { position: absolute; left: 0; top: 0; width: 1920px; height: 1080px; transform-origin: 0 0; }
+.plate { position: absolute; inset: 0; background-size: 1920px 1080px; background-repeat: no-repeat; opacity: 0; }
+.plate.on { opacity: 1; }
+#p-inbox { background-image: url(captures/inbox.png); }
+#p-thread { background-image: url(captures/thread.png); }
+#p-ask { background-image: url(captures/compose-ask.png); }
+#p-done { background-image: url(captures/compose-done.png); }
+#p-presets { background-image: url(captures/presets.png); }
+/* "Typing": a cover in the field's colour slides off the instruction, left to right. */
+#typing { position: absolute; transform-origin: 100% 50%; }
+.ring { position: absolute; border-radius: 12px; border: 3px solid var(--red); box-shadow: 0 0 0 6px rgba(252,40,50,.18), 0 0 40px rgba(252,40,50,.55); opacity: 0; }
+
+/* macOS notification, as ZMail posts it (Notifications.swift + pipeline.ts): title, subtitle, body, actions. */
+#notif { position: absolute; right: 18px; top: 18px; width: 560px; border-radius: 26px; padding: 18px 20px 18px 18px; display: grid; grid-template-columns: 54px 1fr; column-gap: 14px; background: rgba(44,42,50,.86); border: 1px solid rgba(255,255,255,.14); box-shadow: 0 24px 70px rgba(0,0,0,.55); font-family: -apple-system, "SF Pro Text", "PJS", sans-serif; z-index: 6; }
+#notif .zi { width: 54px; height: 54px; }
+#notif .app { display: flex; justify-content: space-between; font: 600 15px/1.3 -apple-system, "PJS"; color: #fff; }
+#notif .app small { font-weight: 400; color: rgba(255,255,255,.55); }
+#notif .sub { font: 600 15px/1.35 -apple-system, "PJS"; color: #fff; }
+#notif .body { font: 400 15px/1.35 -apple-system, "PJS"; color: rgba(255,255,255,.85); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 470px; }
+#options { position: absolute; right: 16px; top: 14px; height: 30px; padding: 0 12px; border-radius: 9px; background: rgba(80,78,88,.95); font: 500 14px/30px -apple-system, "PJS"; color: #fff; opacity: 0; }
+#menu { position: absolute; right: 16px; top: 50px; width: 190px; padding: 6px; border-radius: 12px; background: rgba(50,48,56,.97); border: 1px solid rgba(255,255,255,.12); box-shadow: 0 18px 40px rgba(0,0,0,.5); font: 500 15px/1 -apple-system, "PJS"; opacity: 0; }
+#menu div { padding: 9px 12px; border-radius: 7px; }
+#menu .hi { background: #0A64D6; }
+#cursor { position: absolute; left: 0; top: 0; width: 34px; height: 34px; z-index: 8; opacity: 0; }
+.zi { display: block; flex: none; background: url(assets/zmail-icon.svg) center / contain no-repeat; }
+
+/* A website asking for the code, then the code pasted in. */
+#verify { position: absolute; left: 50%; top: 50%; width: 760px; margin: -190px 0 0 -380px; padding: 44px 50px; border-radius: 26px; background: #F7F7F9; color: #111; box-shadow: 0 40px 120px rgba(0,0,0,.6); z-index: 7; opacity: 0; text-align: center; }
+#verify h4 { margin: 0 0 8px; font: 800 34px/1.2 "PJS"; }
+#verify p { margin: 0 0 30px; font: 500 19px/1.4 "PJS"; color: #555; }
+#digits { display: flex; justify-content: center; gap: 14px; }
+#digits span { width: 76px; height: 92px; border-radius: 16px; border: 2px solid #D6D6DE; background: #fff; font: 700 48px/88px "JBM", monospace; color: #111; }
+#digits b { display: inline-block; opacity: 0; }
+#verified { margin-top: 26px; font: 700 20px/1 "PJS"; color: #16A34A; opacity: 0; }
+
+/* Feature titles: centred, the app dimmed and blurred behind them. */
+#veil { position: absolute; inset: 0; background: rgba(8,7,10,.66); opacity: 0; z-index: 9; }
+#titles { position: absolute; inset: 0; z-index: 10; }
+#titles > div { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; opacity: 0; }
+#titles h2 { margin: 0; font: 800 124px/1.02 "PJS"; letter-spacing: -.045em; text-shadow: 0 8px 60px rgba(0,0,0,.8); }
+#titles p { margin: 28px 0 0; font: 500 38px/1.3 "PJS"; color: #D9D8E2; letter-spacing: -.01em; }
+.v { color: var(--red-l); }
+
+/* ── Your AI, over MCP ── */
+#s2 .wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+#s2 h1 { margin: 0; font: 800 112px/1 "PJS"; letter-spacing: -.045em; }
+#s2 .sub { margin: 22px 0 44px; font: 500 34px/1.3 "PJS"; color: #D9D8E2; }
+#chat { width: 1180px; border-radius: 28px; padding: 30px 36px; background: linear-gradient(135deg, rgba(255,255,255,.075), rgba(255,255,255,.025) 40%, rgba(255,255,255,.01) 70%, rgba(255,255,255,.055)); border: 1px solid rgba(255,255,255,.14); box-shadow: inset 0 1px 0 rgba(255,255,255,.22), 0 40px 120px rgba(0,0,0,.6); display: flex; flex-direction: column; gap: 20px; }
+#chat .head { display: flex; align-items: center; gap: 14px; font: 700 22px/1 "PJS"; color: #D9D8E2; }
+#chat .head i { width: 34px; height: 34px; border-radius: 10px; background: linear-gradient(135deg, #3B3A45, #232229); display: flex; align-items: center; justify-content: center; font-style: normal; font-size: 18px; color: #fff; }
+#ask { align-self: flex-end; max-width: 80%; padding: 18px 24px; border-radius: 20px; background: #2A2931; font: 500 29px/1.35 "PJS"; color: #F2F1F6; }
+#ask span, #answer span { display: inline-block; margin-right: .25em; }
+#tool { align-self: flex-start; display: flex; align-items: center; gap: 12px; padding: 12px 18px; border-radius: 14px; background: rgba(252,40,50,.12); border: 1px solid rgba(252,40,50,.35); font: 400 22px/1 "JBM", monospace; color: var(--red-l); }
+#tool .zi { width: 30px; height: 30px; }
+#answer { font: 500 29px/1.4 "PJS"; color: #E9E8EF; }
+#answer .ok { color: #4ADE80; }
+#clients { margin-top: 40px; display: flex; gap: 20px; }
+.pill { padding: 20px 32px; border-radius: 999px; font: 700 40px/1 "PJS"; letter-spacing: -.01em; background: rgba(255,255,255,.07); border: 2px solid rgba(255,255,255,.14); display: flex; align-items: center; gap: 16px; white-space: nowrap; }
+.pill b { width: 32px; height: 32px; border-radius: 50%; background: var(--red-d); display: inline-flex; align-items: center; justify-content: center; font-size: 20px; }
+.pill.ghost b { background: rgba(255,255,255,.18); }
+
+/* ── Themes: the real inbox, one theme per beat ── */
+#s3 .wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+#s3 h1 { margin: 0 0 40px; font: 800 112px/1 "PJS"; letter-spacing: -.045em; }
+#frame { position: relative; width: 1248px; height: 702px; border-radius: 22px; overflow: hidden; box-shadow: 0 40px 120px rgba(0,0,0,.65), 0 0 0 1px rgba(255,255,255,.12); }
+#frame .th { position: absolute; inset: 0; background-size: cover; background-position: top left; opacity: 0; }
+
+/* ── 100% ── */
+#s4 .wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+.big { font: 800 150px/1.02 "PJS"; letter-spacing: -.055em; text-shadow: 0 0 80px rgba(252,40,50,.45); }
+.big .v { margin-right: .18em; }
+#promises { margin-top: 60px; display: flex; gap: 20px; }
+
+/* ── Lockup ── */
+#s5 .wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; }
+#lockup { width: 1000px; height: auto; overflow: visible; }
+#tagline { margin-top: 70px; font: 800 76px/1 "PJS"; letter-spacing: -.03em; display: flex; gap: .28em; }
+#tagline .v { color: var(--red-l); }
+#subline { margin-top: 34px; font: 500 34px/1.3 "PJS"; color: #C9C8D3; }
+</style>
+</head>
+<body>
+<div id="root" data-composition-id="zmail-demo" data-start="0" data-duration="__END__" data-width="1920" data-height="1080">
+
+  <div id="dots" class="layer clip" data-start="0" data-duration="__END__" data-track-index="0"></div>
+  <div id="glow" class="layer clip" data-start="0" data-duration="__END__" data-track-index="1"></div>
+
+  <!-- 01–05: the real app, one camera -->
+  <div id="s1" class="scene clip" data-start="0" data-duration="18.9" data-track-index="2">
+    <div class="wrap">
+      <div id="stage">
+        <div id="camera">
+          <div id="p-inbox" class="plate on"></div>
+          <div id="p-presets" class="plate"></div>
+          <div id="p-thread" class="plate"></div>
+          <div id="p-ask" class="plate"><div id="typing"></div></div>
+          <div id="p-done" class="plate"></div>
+          __RINGS__
+        </div>
+        <div id="notif"><i class="zi"></i><div><div class="app">ZMail<small>now</small></div><div class="sub">Code 482913</div><div class="sub" style="font-weight:500">Paylane</div><div class="body">Your Paylane verification code — tap “Copy code”</div></div>
+          <div id="options">Options ▾</div>
+          <div id="menu"><div id="m-copy">Copy code</div><div>Open</div></div>
+        </div>
+        <svg id="cursor" viewBox="0 0 24 24"><path d="M4 2l15 11-6.6 1.2L16 21l-3 1.4-3.6-6.8L4 20z" fill="#fff" stroke="#000" stroke-width="1.3" stroke-linejoin="round"/></svg>
+      </div>
+      <div id="verify"><h4>Verify it’s you</h4><p>Enter the 6-digit code we sent to your email.</p>
+          <div id="digits"><span><b>4</b></span><span><b>8</b></span><span><b>2</b></span><span><b>9</b></span><span><b>1</b></span><span><b>3</b></span></div>
+          <div id="verified">✓ Verified</div></div>
+      <div id="veil"></div>
+      <div id="titles">
+        <div id="t1"><h2>Every inbox. <span class="v">One place.</span></h2><p>Gmail, iCloud, Outlook, your own server: one unified inbox.</p></div>
+        <div id="t2"><h2>Sorted by <span class="v">AI, 24/7.</span></h2><p>Tags, priority and a summary on every mail, the moment it lands.</p></div>
+        <div id="t3"><h2>Free, Business <span class="v">or Ultra.</span></h2><p>Pick how hard the AI works for you.</p></div>
+        <div id="t4"><h2>OTP codes, <span class="v">copied</span><br>from the notification.</h2><p>No need to open the mail.</p></div>
+        <div id="t5"><h2>Your files, <span class="v">attached for you.</span></h2><p>Ask for a reply: ZMail finds the documents on your Mac.</p></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 06 · Your AI, over MCP -->
+  <div id="s2" class="scene clip" data-start="18.6" data-duration="3.4" data-track-index="3">
+    <div class="wrap">
+      <h1>Run it from <span class="v">your AI.</span></h1>
+      <div class="sub">ZMail plugs into your assistant over MCP. API included.</div>
+      <div id="chat">
+        <div class="head"><i>✦</i>Your AI assistant</div>
+        <div id="ask">__ASK__</div>
+        <div id="tool"><i class="zi"></i>zmail · archive_threads</div>
+        <div id="answer">__ANSWER__</div>
+      </div>
+      <div id="clients">
+        <div class="pill"><b>✓</b>Claude</div>
+        <div class="pill"><b>✓</b>ChatGPT</div>
+        <div class="pill"><b>✓</b>Any MCP client</div>
+        <div class="pill"><b>✓</b>API</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 07 · Themes -->
+  <div id="s3" class="scene clip" data-start="22.0" data-duration="2.6" data-track-index="4">
+    <div class="wrap">
+      <h1>40+ <span class="v">themes.</span></h1>
+      <div id="frame">__THEMES__</div>
+    </div>
+  </div>
+
+  <!-- 08 · 100% -->
+  <div id="s4" class="scene clip" data-start="24.6" data-duration="2.9" data-track-index="5">
+    <div class="wrap">
+      <div class="big" id="b1"><span class="v">100%</span>free.</div>
+      <div class="big" id="b2"><span class="v">100%</span>open source.</div>
+      <div class="big" id="b3"><span class="v">100%</span>AI-powered.</div>
+      <div id="promises">
+        <div class="pill"><b>✓</b>Hours back, every day</div>
+        <div class="pill"><b>✓</b>No account</div>
+        <div class="pill ghost"><b>→</b>Mobile · soon</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Lockup -->
+  <div id="s5" class="scene clip" data-start="27.5" data-duration="__LOCKUP_DUR__" data-track-index="6">
+    <div class="wrap">
+      __LOCKUP__
+      <div id="tagline"><span>Your inbox,</span><span class="v">on autopilot.</span></div>
+      <div id="subline">AI sorts, answers and attaches for you. Your time is worth more.</div>
+    </div>
+  </div>
+
+  <div id="vignette" class="layer clip" data-start="0" data-duration="__END__" data-track-index="8"></div>
+  <div id="grain" class="layer clip" data-start="0" data-duration="__END__" data-track-index="9"></div>
+  <div id="flash" class="layer clip" data-start="0" data-duration="__END__" data-track-index="10"></div>
+
+  <div id="hud" class="layer clip" data-start="0" data-duration="__END__" data-track-index="12">
+    <span class="crop tl"></span><span class="crop tr"></span><span class="crop bl"></span><span class="crop br"></span>
+    <div id="ruler">__RULER__</div>
+    <div id="hud-chapter">01 · Every inbox</div>
+  </div>
+</div>
+
+<script>
+(() => {
+  const END = __END__;
+  const W = 1920, H = 1080;
+  // Where things are in the captures, in CSS px (from capture.mjs).
+  const BOX = __BOXES__;
+  const tl = gsap.timeline({ paused: true });
+
+  // Camera: frame a point of the capture at a given zoom. The world is scaled from its
+  // top-left corner, so (px, py) lands at (sx, sy) on screen.
+  const cam = (px, py, s, sx = W / 2, sy = H / 2) => ({ x: sx - px * s, y: sy - py * s, scale: s });
+  const mid = (b) => [b.x + b.width / 2, b.y + b.height / 2];
+  // Fit a box with some margin, never past 2× (the captures are 2×).
+  const fit = (b, margin = 1.35, max = 2) => Math.min(max, W / (b.width * margin), H / (b.height * margin));
+  const on = (b, margin, max) => { const [x, y] = mid(b); return cam(x, y, fit(b, margin, max)); };
+  const WIDE = cam(W / 2, H / 2, 1);
+
+  // A feature title: the app blurs and dims, the title lands in the middle, then clears.
+  const title = (id, at, hold) => {
+    tl.to("#camera", { filter: "blur(14px)", duration: 0.35, ease: "power2.out" }, at);
+    tl.to("#veil", { opacity: 1, duration: 0.35, ease: "power2.out" }, at);
+    tl.set(id, { opacity: 1 }, at + 0.05);
+    tl.from(`${id} h2`, { scale: 1.25, opacity: 0, filter: "blur(12px)", duration: 0.5, ease: "expo.out" }, at + 0.05);
+    tl.from(`${id} p`, { y: 24, opacity: 0, duration: 0.4, ease: "power2.out" }, at + 0.3);
+    tl.to(id, { opacity: 0, scale: 0.94, filter: "blur(10px)", duration: 0.3, ease: "power2.in" }, at + hold);
+    tl.set(id, { opacity: 0 }, at + hold + 0.3);
+    tl.to("#camera", { filter: "blur(0px)", duration: 0.4, ease: "power2.out" }, at + hold + 0.1);
+    tl.to("#veil", { opacity: 0, duration: 0.4, ease: "power2.out" }, at + hold + 0.1);
+  };
+  const plate = (id, at, d = 0.3) => {
+    tl.to(`.plate:not(${id})`, { opacity: 0, duration: d, ease: "none" }, at);
+    tl.to(id, { opacity: 1, duration: d, ease: "none" }, at);
+  };
+  const ring = (id, at, out) => {
+    tl.fromTo(id, { opacity: 0, scale: 1.25 }, { opacity: 1, scale: 1, duration: 0.35, ease: "back.out(1.8)" }, at);
+    tl.to(id, { opacity: 0, duration: 0.25, ease: "power1.in" }, out);
+  };
+
+  // ── 01 · EVERY INBOX ──
+  tl.set("#camera", { ...WIDE, scale: 1.04, x: -38, y: -22 }, 0);
+  tl.from("#stage", { opacity: 0, duration: 0.6, ease: "power2.out" }, 0);
+  title("#t1", 0.05, 1.55);
+  tl.to("#camera", { ...on(BOX.sidebar, 1.15, 1.45), duration: 1.0, ease: "power3.inOut" }, 1.9);
+  tl.to("#camera", { ...on(BOX.list, 1.08, 1.5), duration: 0.9, ease: "power3.inOut" }, 2.95);
+
+  // ── 02 · SORTED BY AI ──
+  title("#t2", 3.85, 1.25);
+  tl.set("#camera", on(BOX.rows, 1.1, 1.9), 4.2);
+  tl.to("#camera", { y: on(BOX.rows, 1.1, 1.9).y - 60, duration: 1.6, ease: "none" }, 5.4);
+  ring("#r-tags", 5.5, 6.75);
+
+  // ── 03 · FREE / BUSINESS / ULTRA ──
+  title("#t3", 6.8, 1.1);
+  plate("#p-presets", 7.0, 0.05);
+  tl.set("#camera", on(BOX.presets, 1.12, 1.8), 7.1);
+  tl.to("#camera", { x: on(BOX.presets, 1.12, 1.8).x - 30, duration: 1.5, ease: "none" }, 8.1);
+  ring("#r-presets", 8.25, 9.45);
+
+  // ── 04 · OTP CODES ──
+  title("#t4", 9.5, 1.35);
+  plate("#p-inbox", 9.7, 0.05);
+  tl.set("#camera", { ...WIDE, scale: 1.02, x: -19, y: -11 }, 9.8);
+  tl.fromTo("#notif", { x: 600, opacity: 0 }, { x: 0, opacity: 1, duration: 0.5, ease: "back.out(1.2)" }, 11.0);
+  // Zoom the stage on the notification (positions read from the laid-out page, before any transform).
+  const nr = document.getElementById("notif").getBoundingClientRect();
+  const Z = 1.75, zx = W / 2 - (nr.x + nr.width / 2) * Z, zy = 330 - (nr.y + nr.height / 2) * Z;
+  const pos = (el, fx = 0.5, fy = 0.5) => { const r = document.getElementById(el).getBoundingClientRect(); return { x: r.x + r.width * fx - 6, y: r.y + r.height * fy - 4 }; };
+  const opt = pos("options"), copy = pos("m-copy", 0.3);
+  tl.to("#stage", { scale: Z, x: zx, y: zy, transformOrigin: "0 0", duration: 0.7, ease: "power3.inOut" }, 11.25);
+  tl.fromTo("#cursor", { x: nr.x + 60, y: nr.y + nr.height + 120, opacity: 0 }, { opacity: 1, duration: 0.15 }, 11.6);
+  tl.to("#cursor", { x: opt.x, y: opt.y, duration: 0.45, ease: "power3.inOut" }, 11.65);
+  tl.to("#notif .app small", { opacity: 0, duration: 0.12 }, 11.9);
+  tl.to("#options", { opacity: 1, duration: 0.15, ease: "power2.out" }, 11.9);
+  tl.set("#menu", { opacity: 1 }, 12.2);
+  tl.to("#cursor", { x: copy.x, y: copy.y, duration: 0.25, ease: "power2.inOut" }, 12.25);
+  tl.set("#m-copy", { className: "hi" }, 12.5);
+  tl.to("#cursor", { scale: 0.85, duration: 0.08, yoyo: true, repeat: 1 }, 12.6);
+  tl.to("#notif", { x: 600, opacity: 0, duration: 0.35, ease: "power2.in" }, 12.75);
+  tl.to("#cursor", { opacity: 0, duration: 0.15 }, 12.75);
+  tl.to("#stage", { scale: 1, x: 0, y: 0, filter: "blur(10px) brightness(.7)", duration: 0.5, ease: "power3.inOut" }, 12.85);
+  tl.fromTo("#verify", { opacity: 0, y: 60, scale: 0.92 }, { opacity: 1, y: 0, scale: 1, duration: 0.45, ease: "back.out(1.5)" }, 12.95);
+  tl.to("#digits b", { opacity: 1, duration: 0.01, stagger: 0.04 }, 13.45);
+  tl.to("#verified", { opacity: 1, duration: 0.25 }, 13.75);
+  tl.to("#verify", { opacity: 0, scale: 0.95, duration: 0.3, ease: "power2.in" }, 14.2);
+  tl.set("#verify", { opacity: 0 }, 14.5);
+  tl.to("#stage", { filter: "blur(0px) brightness(1)", duration: 0.3 }, 14.5);
+
+  // ── 05 · YOUR FILES ──
+  title("#t5", 14.25, 1.35);
+  plate("#p-ask", 14.5, 0.05);
+  tl.set("#camera", on(BOX.assistant, 1.12, 1.9), 14.6);
+  tl.fromTo("#typing", { scaleX: 1 }, { scaleX: 0, duration: 0.9, ease: "none" }, 15.75);
+  plate("#p-done", 16.9, 0.3);
+  // The written reply and its two attachments, without the list next to it.
+  const DONE = { x: BOX.composer.x, y: BOX.attachments.y - 380, width: BOX.composer.width, height: 420 };
+  tl.to("#camera", { ...on(DONE, 1.06, 2), duration: 0.6, ease: "power3.inOut" }, 16.9);
+  ring("#r-files", 17.4, 18.5);
+  tl.to("#s1 .wrap", { y: -160, filter: "blur(30px)", duration: 0.3, ease: "power2.in" }, 18.6);
+  tl.set("#s1 .wrap", { opacity: 0 }, 18.9);
+
+  // ── 06 · YOUR AI ──
+  tl.fromTo("#s2 .wrap", { y: 160, filter: "blur(30px)" }, { y: 0, filter: "blur(0px)", duration: 0.5, ease: "power2.out" }, 18.6);
+  tl.from("#s2 h1", { scale: 1.4, opacity: 0, duration: 0.5, ease: "expo.out" }, 18.6);
+  tl.from("#s2 .sub", { y: 20, opacity: 0, duration: 0.4, ease: "power2.out" }, 18.85);
+  tl.from("#chat", { y: 60, opacity: 0, duration: 0.45, ease: "power3.out" }, 18.9);
+  tl.from("#ask span", { opacity: 0, y: 12, filter: "blur(6px)", duration: 0.25, ease: "expo.out", stagger: 0.035 }, 19.15);
+  tl.from("#tool", { scale: 0.6, opacity: 0, duration: 0.3, ease: "back.out(2)" }, 19.75);
+  tl.from("#answer span", { opacity: 0, y: 12, filter: "blur(6px)", duration: 0.28, ease: "expo.out", stagger: 0.028 }, 20.1);
+  tl.from("#clients .pill", { y: 50, scale: 0.7, opacity: 0, duration: 0.38, ease: "back.out(1.7)", stagger: 0.12 }, 20.6);
+  tl.to("#s2 .wrap", { scale: 1.12, opacity: 0, filter: "blur(24px)", duration: 0.3, ease: "power2.in" }, 21.7);
+  tl.set("#s2 .wrap", { opacity: 0 }, 22.0);
+
+  // ── 07 · THEMES ──
+  tl.fromTo("#s3 .wrap", { scale: 0.9, filter: "blur(24px)" }, { scale: 1, filter: "blur(0px)", duration: 0.45, ease: "power2.out" }, 22.0);
+  tl.from("#s3 h1", { scale: 1.4, opacity: 0, duration: 0.45, ease: "expo.out" }, 22.0);
+  tl.set("#frame .th:first-child", { opacity: 1 }, 22.0);
+  document.querySelectorAll("#frame .th").forEach((el, i) => { if (i) tl.to(el, { opacity: 1, duration: 0.08, ease: "none" }, 22.5 + (i - 1) * 0.27); });
+  tl.to("#s3 .wrap", { y: -160, filter: "blur(30px)", duration: 0.3, ease: "power2.in" }, 24.3);
+  tl.set("#s3 .wrap", { opacity: 0 }, 24.6);
+
+  // ── 08 · 100% ──
+  tl.fromTo("#s4 .wrap", { y: 160, filter: "blur(30px)" }, { y: 0, filter: "blur(0px)", duration: 0.5, ease: "power2.out" }, 24.6);
+  tl.from("#b1", { scale: 2.6, opacity: 0, duration: 0.45, ease: "expo.out" }, 24.6);
+  tl.from("#b2", { scale: 2.6, opacity: 0, duration: 0.45, ease: "expo.out" }, 24.95);
+  tl.from("#b3", { scale: 2.6, opacity: 0, duration: 0.45, ease: "expo.out" }, 25.3);
+  tl.from("#promises .pill", { y: 60, scale: 0.7, opacity: 0, duration: 0.4, ease: "back.out(1.7)", stagger: 0.18 }, 25.8);
+
+  // ── Lockup ──
+  tl.from("#lk-name", { y: 70, opacity: 0, duration: 0.6, ease: "expo.out" }, 27.55);
+  tl.from("#lk-zippy", { y: 50, opacity: 0, duration: 0.5, ease: "power3.out" }, 27.7);
+  tl.from("#lk-icon", { y: -900, rotation: -16, opacity: 0, transformOrigin: "50% 100%", duration: 0.5, ease: "power2.in" }, 27.85);
+  tl.to("#lk-icon", { scaleY: 0.8, scaleX: 1.1, transformOrigin: "50% 100%", duration: 0.08, ease: "power2.out" }, 28.35);
+  tl.to("#lk-icon", { scaleY: 1, scaleX: 1, transformOrigin: "50% 100%", duration: 0.5, ease: "elastic.out(1, 0.4)" }, 28.43);
+  tl.from("#tagline span", { y: 40, opacity: 0, duration: 0.45, ease: "expo.out", stagger: 0.16 }, 28.6);
+  tl.from("#subline", { opacity: 0, y: 16, duration: 0.6, ease: "power2.out" }, 29.1);
+
+  // ── Per-frame driver ──
+  const segs = [...document.querySelectorAll("#ruler b")];
+  const chapter = document.getElementById("hud-chapter");
+  const dots = document.getElementById("dots");
+  const flash = document.getElementById("flash");
+  const glow = document.getElementById("glow");
+  const LABELS = [[0, "01 · Every inbox"], [3.85, "02 · Sorted"], [6.8, "03 · Precision"], [9.5, "04 · OTP codes"], [14.25, "05 · Files"], [18.6, "06 · Your AI"], [22.0, "07 · Themes"], [24.6, "08 · Free"], [27.5, "ZMail"]];
+  const SEG = [...LABELS.map((l) => l[0]), END];
+  const clamp = (v) => Math.max(0, Math.min(1, v));
+  function frame(t) {
+    let label = LABELS[0][1];
+    for (const [s, l] of LABELS) if (t >= s) label = l;
+    chapter.textContent = label;
+    segs.forEach((b, i) => { b.style.transform = "scaleX(" + clamp((t - SEG[i]) / (SEG[i + 1] - SEG[i])) + ")"; });
+    dots.style.backgroundPosition = "0px " + (-t * 22).toFixed(1) + "px";
+    let f = 0;
+    for (const c of [27.5]) { const q = (t - c) / 0.2; if (q >= 0 && q <= 1) f = 0.8 * (1 - q); }
+    flash.style.opacity = f;
+    glow.style.opacity = t < 18.6 ? 0.35 : 1;
+    glow.style.transform = "scale(" + (1 + 0.04 * Math.sin(t * 1.4)) + ")";
+  }
+  const drv = { t: 0 };
+  tl.fromTo(drv, { t: 0 }, { t: END, duration: END, ease: "none", onUpdate: () => frame(drv.t) }, 0);
+  frame(0);
+
+  window.__timelines = window.__timelines || {};
+  window.__timelines["zmail-demo"] = tl;
+})();
+</script>
+</body>
+</html>

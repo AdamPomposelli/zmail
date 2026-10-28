@@ -1,0 +1,3 @@
+{
+  "extends": "@zmail/tsconfig/base"
+}

@@ -1,0 +1,250 @@
+/**
+ * The demo mailboxes in English, for `scripts/demo.ts --lang en` (screenshots, the README demo).
+ * Same accounts and the same kinds of mail as mails.ts. Every brand and person is fictional.
+ */
+import { html, newsletter, type FixtureAccount, type FixtureMail } from './mails';
+
+export const ACCOUNTS_EN: FixtureAccount[] = [
+  { email: 'adam@nordlys.studio', name: 'Adam — Nordlys Studio', business: 'studio' },
+  { email: 'contact@nordlys.studio', name: 'Nordlys Studio', business: 'studio' },
+  { email: 'support@maisonvelours.shop', name: 'Velours & Co', business: 'shop' },
+  { email: 'adam.perso@gmail.test', name: 'Adam', business: 'perso' },
+  { email: 'adam@mailbox.test', name: 'Adam (mailbox.org)', business: 'perso' },
+];
+
+export const BUSINESSES_EN = [
+  { key: 'studio', name: 'Nordlys Studio', emoji: '🛰️', color: '#6366F1', description: 'Web and mobile development agency: quotes, clients, partnerships.', domains: ['nordlys.studio'] },
+  { key: 'shop', name: 'Velours & Co', emoji: '🛍️', color: '#EC4899', description: 'Home linen online store: orders, payments, disputes.', domains: ['maisonvelours.shop'] },
+  { key: 'perso', name: 'Personal', emoji: '🏡', color: '#10B981', description: 'Personal life, bank, shopping.', domains: ['gmail.test', 'mailbox.test'] },
+] as const;
+
+export const MAILS_EN: FixtureMail[] = [
+  // ── OTP ─────────────────────────────────────────────────────────────
+  {
+    to: 'adam@nordlys.studio',
+    from: 'no-reply@paylane.test',
+    fromName: 'Paylane',
+    subject: 'Your Paylane verification code',
+    text: 'Hi,\n\nYour verification code is: 482913\n\nIt expires in 10 minutes. Never share it with anyone.\n\nThe Paylane team',
+    html: html('<p>Hi,</p><p>Your verification code is:</p><p style="font-size:28px;font-weight:700;letter-spacing:6px">482913</p><p>It expires in 10 minutes. Never share it with anyone.</p><p>The Paylane team</p>'),
+    hoursAgo: 0.2,
+  },
+  // ── Accountant asking for documents (the compose assistant attaches them from the Mac) ──
+  {
+    to: 'adam@nordlys.studio',
+    from: 'sophie.laurent@ledgerline.test',
+    fromName: 'Sophie Laurent',
+    subject: 'Year-end closing: two documents missing',
+    text: 'Hi Adam,\n\nWe are almost done with the year-end closing. Two documents are still missing on my side: the signed engagement letter and your March invoice from Nimbus Cloud.\n\nCould you send them over today?\n\nThanks,\nSophie Laurent\nLedgerline Accounting',
+    hoursAgo: 0.6,
+  },
+  // ── Business opportunities ─────────────────────────────────────────
+  {
+    to: 'contact@nordlys.studio',
+    from: 'claire.martin@boreal-kitchen.test',
+    fromName: 'Claire Martin',
+    subject: 'Quote request: mobile booking app',
+    text: 'Hello,\n\nI run Boreal Kitchen (3 restaurants in Seattle). We are looking for an agency to build a mobile booking and loyalty app. Budget: $35,000 to $45,000, launch planned for March.\n\nCould you send a quote and your availability for a call this week?\n\nBest regards,\nClaire Martin\nBoreal Kitchen',
+    hoursAgo: 1.5,
+  },
+  {
+    to: 'adam@nordlys.studio',
+    from: 'jonas.weber@northpeak.test',
+    fromName: 'Jonas Weber',
+    subject: 'Partnership: white-label dashboards for our portfolio',
+    text: 'Hi Adam,\n\nWe run a venture studio with 14 SaaS companies and are interested in working with your team on white-label analytics dashboards. Would you be open to a 30-minute call next week to discuss a partnership?\n\nBest,\nJonas',
+    hoursAgo: 20,
+  },
+  {
+    to: 'support@maisonvelours.shop',
+    from: 'purchasing@linden-hotel.test',
+    fromName: 'The Linden Hotel',
+    subject: 'Bulk order: 120 bed linen sets for our hotel',
+    text: 'Hello,\n\nWe are renovating our hotel (60 rooms) and would like to order 120 linen bed sets. Could you send us a price proposal with a volume discount?\n\nKind regards,\nPurchasing — The Linden Hotel',
+    hoursAgo: 3,
+  },
+  // ── Chargeback / urgent ─────────────────────────────────────────────
+  {
+    to: 'support@maisonvelours.shop',
+    from: 'disputes@paylane.test',
+    fromName: 'Paylane Disputes',
+    subject: 'Dispute opened: $249.00 chargeback on order #10482',
+    text: 'A customer disputed a $249.00 payment on order #10482 (reason: product not received).\n\nRespond before November 4 with proof of delivery, or the amount will be refunded to the customer.\n\nPaylane Disputes',
+    hoursAgo: 0.9,
+  },
+  {
+    to: 'support@maisonvelours.shop',
+    from: 'billing@shopcloud.test',
+    fromName: 'ShopCloud',
+    subject: 'Your subscription payment failed — action required',
+    text: 'The payment for your ShopCloud Pro plan ($79) failed. Update your card within 3 days to keep your store online.',
+    hoursAgo: 2.2,
+  },
+  // ── Client thread ───────────────────────────────────────────────────
+  {
+    to: 'adam@nordlys.studio',
+    from: 'thomas.rey@lakefarms.test',
+    fromName: 'Thomas Rey',
+    subject: 'Feedback on mockup v2',
+    text: 'Hi Adam,\n\nThe team loves v2. Two small things: a larger logo on mobile, and the green from our brand guide for the buttons.\n\nCan we review it together this week?\n\nThomas',
+    hoursAgo: 26,
+    thread: 'lakefarms',
+  },
+  {
+    to: 'thomas.rey@lakefarms.test',
+    from: 'adam@nordlys.studio',
+    fromName: 'Adam',
+    subject: 'Re: Feedback on mockup v2',
+    text: 'Hi Thomas,\n\nNoted for the logo and the green. How about Thursday at 2 pm?\n\nAdam',
+    hoursAgo: 8,
+    thread: 'lakefarms',
+    folder: 'Sent',
+    seen: true,
+  },
+  {
+    to: 'adam@nordlys.studio',
+    from: 'thomas.rey@lakefarms.test',
+    fromName: 'Thomas Rey',
+    subject: 'Re: Feedback on mockup v2',
+    text: 'Perfect, thanks! Thursday 2 pm works for me.',
+    hoursAgo: 4,
+    thread: 'lakefarms',
+  },
+  // ── Money ──────────────────────────────────────────────────────────
+  {
+    to: 'adam@nordlys.studio',
+    from: 'billing@nimbus-cloud.test',
+    fromName: 'Nimbus Cloud',
+    subject: 'Your Nimbus Cloud invoice INV-2026-10-4471',
+    text: 'Your invoice for October is available: $184.20, paid with the card ending in 4242.',
+    hoursAgo: 30,
+    seen: true,
+  },
+  {
+    to: 'adam.perso@gmail.test',
+    from: 'alerts@azure-bank.test',
+    fromName: 'Azure Bank',
+    subject: 'Transfer received: $2,400.00',
+    text: 'You received a transfer of $2,400.00 from LAKE FARMS LLC. Reference: INV-0931.',
+    hoursAgo: 6,
+    seen: true,
+  },
+  {
+    to: 'adam.perso@gmail.test',
+    from: 'tracking@swift-parcel.test',
+    fromName: 'Swift Parcel',
+    subject: 'Your parcel has shipped',
+    text: 'Your order is on its way. Expected delivery: Wednesday. Tracking number: SP-88214-US.',
+    hoursAgo: 9,
+  },
+  // ── Meeting and personal ───────────────────────────────────────────
+  {
+    to: 'adam@nordlys.studio',
+    from: 'lucy.garner@lakefarms.test',
+    fromName: 'Lucy Garner',
+    subject: 'Invitation: Lake Farms project check-in — Thursday 2:00 pm',
+    text: 'Lucy Garner invited you to "Lake Farms project check-in", Thursday 2:00 – 2:45 pm (video call).',
+    hoursAgo: 7,
+  },
+  {
+    to: 'adam.perso@gmail.test',
+    from: 'julie@mailbox.test',
+    fromName: 'Julie',
+    subject: 'Dinner on Saturday?',
+    text: 'Hey! Are you free for dinner on Saturday? I found a great little place downtown. 🙂',
+    hoursAgo: 11,
+  },
+  // ── Newsletters and marketing ──────────────────────────────────────
+  {
+    to: 'adam@nordlys.studio',
+    from: 'hello@devpulse.test',
+    fromName: 'DevPulse Weekly',
+    subject: 'DevPulse #212 — React 20, Bun 2 and the end of CSS frameworks',
+    text: 'This week: what React 20 changes, Bun 2 benchmarks, and why teams are dropping CSS frameworks.',
+    hoursAgo: 14,
+    headers: newsletter('devpulse', 'one-click'),
+  },
+  {
+    to: 'adam@nordlys.studio',
+    from: 'hello@devpulse.test',
+    fromName: 'DevPulse Weekly',
+    subject: 'DevPulse #211 — What’s new in TypeScript 6',
+    text: 'TypeScript 6 is here: faster builds, better inference, and a new config format.',
+    hoursAgo: 14 + 24 * 7,
+    headers: newsletter('devpulse', 'one-click'),
+    seen: true,
+  },
+  {
+    to: 'adam.perso@gmail.test',
+    from: 'news@home-decor.test',
+    fromName: 'Home Decor',
+    subject: '🔥 40% off everything: last days!',
+    text: 'Our biggest sale of the year ends Sunday. 40% off throws, cushions and linen.',
+    hoursAgo: 16,
+    headers: newsletter('home-decor', 'form'),
+  },
+  {
+    to: 'adam.perso@gmail.test',
+    from: 'deals@horizon-travel.test',
+    fromName: 'Horizon Travel',
+    subject: 'Flash sale: Lisbon from $59',
+    text: 'Only 48 hours left to grab a flight to Lisbon from $59.',
+    hoursAgo: 19,
+    headers: newsletter('horizon', 'captcha'),
+  },
+  {
+    to: 'adam@mailbox.test',
+    from: 'letter@sunday-brief.test',
+    fromName: 'The Sunday Brief',
+    subject: 'The Sunday Brief: what mattered this week',
+    text: 'Five stories worth your time this week, in ten minutes.',
+    hoursAgo: 40,
+    headers: newsletter('sunday-brief', 'mailto'),
+  },
+  {
+    to: 'contact@nordlys.studio',
+    from: 'growth@leadmachine.test',
+    fromName: 'LeadMachine',
+    subject: 'Grow your sales 10x with our AI',
+    text: 'Book a demo and see how LeadMachine finds 500 new leads for you every week.',
+    hoursAgo: 22,
+    headers: newsletter('leadmachine', 'one-click'),
+  },
+  // ── Notifications ──────────────────────────────────────────────────
+  {
+    to: 'adam@nordlys.studio',
+    from: 'noreply@codehub.test',
+    fromName: 'CodeHub',
+    subject: '[nordlys/app] Deploy succeeded on production',
+    text: 'The deploy of nordlys/app (commit 4f2c9e1) to production succeeded in 2 min 14 s.',
+    hoursAgo: 5,
+    headers: { 'Auto-Submitted': 'auto-generated', 'List-Id': '<app.nordlys.codehub.test>' },
+  },
+  {
+    to: 'support@maisonvelours.shop',
+    from: 'orders@shopcloud.test',
+    fromName: 'ShopCloud',
+    subject: 'New order #10519 — $89.90',
+    text: 'New order #10519 from Emma Collins: 1 × Washed linen duvet cover, $89.90.',
+    hoursAgo: 2.8,
+    headers: { 'Auto-Submitted': 'auto-generated' },
+  },
+  // ── Spam ───────────────────────────────────────────────────────────
+  {
+    to: 'adam.perso@gmail.test',
+    from: 'winner@prize-center.test',
+    fromName: 'Customer Service',
+    subject: 'CONGRATULATIONS!!! YOU WON AN IPHONE 17',
+    text: 'You have been selected! Click here to claim your free iPhone 17 now, offer ends in 1 hour.',
+    hoursAgo: 12,
+  },
+  {
+    to: 'adam@mailbox.test',
+    from: 'security@acc0unt-verify.test',
+    fromName: 'Technical Support',
+    subject: 'Your account will be suspended',
+    text: 'Unusual activity detected. Verify your password within 24 hours or your account will be suspended.',
+    hoursAgo: 13,
+    headers: { 'X-Spam-Flag': 'YES' },
+  },
+];

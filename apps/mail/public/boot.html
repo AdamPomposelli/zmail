@@ -1,0 +1,30 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="light dark" />
+    <title>ZMail</title>
+    <link rel="stylesheet" href="boot.css" />
+    <script src="boot.js"></script>
+    <style>
+      html,
+      body {
+        margin: 0;
+        height: 100%;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="boot"></div>
+    <script>
+      // The macOS app drives this page while the engine starts:
+      // window.zmailBoot.set(progress, label, cap) and window.zmailBoot.error(message).
+      window.zmailBoot = window.ZMailBoot.mount(document.getElementById('boot'), { progress: 6, label: 'Ouverture de ZMail', cap: 14 });
+      // The window has no title bar: its top strip moves it, as in the app.
+      document.addEventListener('mousedown', function (e) {
+        if (e.button === 0 && e.clientY < 48 && window.zmailNative) window.zmailNative.postMessage({ type: e.detail === 2 ? 'zoomWindow' : 'startDrag' });
+      });
+    </script>
+  </body>
+</html>

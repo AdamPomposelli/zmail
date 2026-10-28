@@ -1,0 +1,31 @@
+{
+  "name": "zmail",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@10.12.1",
+  "scripts": {
+    "dev": "turbo run dev",
+    "dev:engine": "pnpm --filter @zmail/engine dev",
+    "dev:ui": "pnpm --filter @zmail/ui dev",
+    "build": "turbo run build",
+    "build:app": "bash scripts/build-macos-app.sh --with-web",
+    "brand": "bash scripts/sync-brand.sh",
+    "i18n:check": "node scripts/i18n-check.mjs",
+    "test": "pnpm --filter @zmail/engine test",
+    "typecheck": "pnpm --filter @zmail/engine typecheck && pnpm --filter @zmail/ui typecheck",
+    "format": "prettier --write \"apps/**/*.{ts,tsx}\" --log-level silent",
+    "testmail:up": "docker compose -f testing/docker-compose.yml up -d",
+    "testmail:down": "docker compose -f testing/docker-compose.yml down -v",
+    "testmail:seed": "pnpm --filter @zmail/engine exec tsx scripts/seed-testmail.ts"
+  },
+  "devDependencies": {
+    "@types/node": "22.15.29",
+    "@zmail/tsconfig": "workspace:*",
+    "prettier": "3.5.3",
+    "prettier-plugin-sort-imports": "1.8.8",
+    "prettier-plugin-tailwindcss": "0.6.12",
+    "tsx": "4.19.4",
+    "turbo": "^2.5.4",
+    "typescript": "catalog:"
+  }
+}

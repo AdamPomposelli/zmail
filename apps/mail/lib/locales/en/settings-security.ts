@@ -1,0 +1,18 @@
+export default {
+  'Sécurité': 'Security',
+  'Vos mots de passe de messagerie et clés d’API sont chiffrés sur ce Mac. Ici, vous choisissez ce qu’il faut pour ouvrir ZMail.': 'Your mail passwords and API keys are encrypted on this Mac. Here you choose what it takes to open ZMail.',
+  'Déverrouillage': 'Unlocking',
+  'Disponible dans l’app ZMail pour Mac.': 'Available in the ZMail app for Mac.',
+  'Déverrouiller avec Touch ID': 'Unlock with Touch ID',
+  'Ce Mac n’a pas de puce de sécurité (Secure Enclave) : le verrouillage n’est pas disponible.': 'This Mac has no security chip (Secure Enclave): the lock is not available.',
+  'À chaque ouverture, {sensor} au lieu d’un mot de passe. Tant que ZMail est verrouillé, vos mails et vos clés restent chiffrés. Il se reverrouille après 10 min hors de vue.': 'Each time you open it, {sensor} instead of a password. While ZMail is locked, your mail and keys stay encrypted. It locks again after 10 min out of sight.',
+  'le mot de passe du Mac': 'your Mac password',
+  'Verrouiller maintenant': 'Lock now',
+  'Raccourci : {keys}': 'Shortcut: {keys}',
+  'Verrouiller': 'Lock',
+  'Touch ID est demandé à chaque ouverture de ZMail.': 'Touch ID is now required each time ZMail opens.',
+  'ZMail s’ouvre sans Touch ID.': 'ZMail opens without Touch ID.',
+  'Activé ou non, ZMail ne demande plus le mot de passe du Trousseau : la clé qui protège vos secrets est gardée par la puce de sécurité du Mac. L’activer comme le désactiver demande {sensor}.': 'On or off, ZMail no longer asks for the Keychain password: the key protecting your secrets is kept by the Mac’s security chip. Turning it on or off asks for {sensor}.',
+  'Touch ID au lieu d’un mot de passe à l’ouverture': 'Touch ID instead of a password when opening',
+  'sécurité verrou verrouiller touch id empreinte doigt passkey mot de passe trousseau déverrouiller': 'security lock touch id fingerprint passkey password keychain unlock',
+} satisfies Record<string, string>;

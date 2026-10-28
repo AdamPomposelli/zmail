@@ -1,0 +1,20 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="72" viewBox="0 0 280 72" role="img" aria-label="Download ZMail for Mac">
+  <defs>
+    <linearGradient id="fill" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#FC2832"/>
+      <stop offset="1" stop-color="#EB030E"/>
+    </linearGradient>
+  </defs>
+  <rect x="1" y="1" width="278" height="70" rx="18" fill="url(#fill)"/>
+  <rect x="1.5" y="1.5" width="277" height="69" rx="17.5" fill="none" stroke="#FFFFFF" stroke-opacity="0.18"/>
+  <!-- Download arrow into a tray -->
+  <g fill="none" stroke="#FFFFFF" stroke-width="2.6" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M44 22v20"/>
+    <path d="M36 35l8 8 8-8"/>
+    <path d="M32 46v3a3 3 0 0 0 3 3h18a3 3 0 0 0 3-3v-3"/>
+  </g>
+  <g font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#FFFFFF">
+    <text x="74" y="34" font-size="21" font-weight="700" letter-spacing="-0.2">Download for Mac</text>
+    <text x="74" y="53" font-size="12.5" font-weight="500" fill-opacity="0.82">Free · Apple silicon · ZMail.dmg</text>
+  </g>
+</svg>

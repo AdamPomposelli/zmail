@@ -1,0 +1,14 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="824" height="824" viewBox="100 100 824 824" fill="none" role="img" aria-label="ZMail app icon">
+  <title>ZMail app icon</title>
+  <!-- Vector twin of make-icon.swift: an envelope whose top edge, diagonal and bottom edge read as a Z. -->
+  <defs>
+    <linearGradient id="ez-body" x1="512" y1="100" x2="512" y2="924" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#34343A"/><stop offset="1" stop-color="#0D0D0F"/></linearGradient>
+    <radialGradient id="ez-sheen" cx="512" cy="-20" r="620" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF" stop-opacity="0.10"/><stop offset="1" stop-color="#FFFFFF" stop-opacity="0"/></radialGradient>
+    <linearGradient id="ez-ink" x1="512" y1="268" x2="512" y2="756" gradientUnits="userSpaceOnUse"><stop offset="0" stop-color="#FFFFFF"/><stop offset="1" stop-color="#D9DBE3"/></linearGradient>
+  </defs>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#ez-body)"/>
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#ez-sheen)"/>
+  <rect x="102" y="102" width="820" height="820" rx="183" stroke="#FFFFFF" stroke-opacity="0.10" stroke-width="4"/>
+  <path d="M262 322V702M762 322V702M262 322L512 512" stroke="#FFFFFF" stroke-opacity="0.28" stroke-width="29.7" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M262 322H762L262 702H762" stroke="url(#ez-ink)" stroke-width="54" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

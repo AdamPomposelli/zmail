@@ -1,0 +1,70 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "demo-engine",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@zmail/engine",
+        "exec",
+        "tsx",
+        "scripts/demo.ts"
+      ],
+      "port": 47813,
+      "env": {
+        "ZMAIL_UI_DIR": "../mail/build/client",
+        "ZMAIL_PORT": "47813"
+      }
+    },
+    {
+      "name": "ui",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@zmail/ui",
+        "dev"
+      ],
+      "port": 5317
+    },
+    {
+      "name": "demo-engine-en",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@zmail/engine",
+        "exec",
+        "tsx",
+        "scripts/demo.ts",
+        "--lang",
+        "en"
+      ],
+      "port": 47814,
+      "env": {
+        "ZMAIL_UI_DIR": "../mail/build/client",
+        "ZMAIL_PORT": "47814",
+        "ZMAIL_DATA_DIR": "/tmp/zmail-demo-en"
+      }
+    },
+    {
+      "name": "demo-engine-en-keep",
+      "runtimeExecutable": "pnpm",
+      "runtimeArgs": [
+        "--filter",
+        "@zmail/engine",
+        "exec",
+        "tsx",
+        "scripts/demo.ts",
+        "--lang",
+        "en",
+        "--keep"
+      ],
+      "port": 47814,
+      "env": {
+        "ZMAIL_UI_DIR": "../mail/build/client",
+        "ZMAIL_PORT": "47814",
+        "ZMAIL_DATA_DIR": "/tmp/zmail-demo-en"
+      }
+    }
+  ]
+}
