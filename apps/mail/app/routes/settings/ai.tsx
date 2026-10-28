@@ -10,6 +10,7 @@ import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover
 import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
+import { RetriageButton, RetriagePanel, RetriageSuggestion } from '@/components/retriage';
 import { openExternal } from '@/lib/native';
 import { useTRPC, type Outputs } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
@@ -53,15 +54,16 @@ export default function AiSettings() {
   const setOverride = useMutation(trpc.ai.setOverride.mutationOptions({ onSuccess: invalidate }));
   const setChatPerDay = useMutation(trpc.ai.setChatPerDay.mutationOptions({ onSuccess: invalidate }));
   const setMailsPerDay = useMutation(trpc.ai.setMailsPerDay.mutationOptions({ onSuccess: invalidate }));
+  const [modeChanged, setModeChanged] = useState<string | null>(null);
   const setPreset = useMutation(
     trpc.ai.setPreset.mutationOptions({
       onSuccess: (_, { preset }) => {
         invalidate();
-        toast.success(t('Mode « {label} » activé', { label: PRESET_TEXT[preset].label }), { description: t('Il s’applique aux prochains mails. « Reclasser tous les mails » l’applique aussi aux anciens.') });
+        // Mails sorted before used the old mode: offer to re-read them (closable).
+        setModeChanged(PRESET_TEXT[preset].label);
       },
     }),
   );
-  const retriage = useMutation(trpc.ai.retriageAll.mutationOptions({ onSuccess: (n) => toast.success(tp(n, '{n} mail en cours de reclassement', '{n} mails en cours de reclassement')) }));
   if (!status) return null;
 
   const monthly = status.capabilities.reduce((sum, c) => sum + (c.active?.monthlyCost ?? 0), 0);
@@ -71,9 +73,11 @@ export default function AiSettings() {
     <SettingsPage
       title={t('Intelligence artificielle')}
       description={t('ZMail choisit lui-même le meilleur modèle pour chaque tâche, d’après ses benchmarks. Vous connectez un service, il s’occupe du reste.')}
-      actions={<GhostButton onClick={() => retriage.mutate()}>{retriage.isPending ? <Loader2 className="size-3.5 animate-spin" /> : null}{t('Reclasser tous les mails')}</GhostButton>}
+      actions={<RetriageButton />}
     >
       <PresetPicker status={status} onChange={(preset) => setPreset.mutate({ preset })} pending={setPreset.isPending} />
+      {modeChanged ? <RetriageSuggestion mode={modeChanged} onClose={() => setModeChanged(null)} /> : null}
+      <RetriagePanel />
 
       <Card id="apple-intelligence">
         <div className="flex items-start gap-4">

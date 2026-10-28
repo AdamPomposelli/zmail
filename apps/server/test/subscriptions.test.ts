@@ -59,4 +59,21 @@ describe('subscriptions', () => {
     expect(rows.find((r) => r.accountId === 'work')!.status).toBe('success');
     expect(rows.find((r) => r.accountId === 'perso')!.status).toBe('subscribed');
   });
+
+  it('counts the mails still kept, and deletes all of one sender on one mailbox only', async () => {
+    expect(engine.subscriptions.list().find((r) => r.accountId === 'work')!.kept).toBe(2);
+    let trashed: string[] = [];
+    // No IMAP server here: record the conversations instead of moving them.
+    (engine.actions as unknown as { trash: (ids: string[]) => Promise<void> }).trash = async (ids) => void (trashed = ids);
+    const { threadIds } = await engine.subscriptions.trashFromSender('work', 'news@devpulse.test');
+    const workThreads = engine.db.all<{ thread_id: string }>(`SELECT DISTINCT thread_id FROM messages WHERE account_id = 'work'`).map((r) => r.thread_id);
+    expect(threadIds.sort()).toEqual(workThreads.sort());
+    expect(trashed.sort()).toEqual(workThreads.sort());
+    // Moved to the trash folder, they no longer count as kept; the other mailbox is untouched.
+    engine.db.run(`INSERT INTO mailboxes (id, account_id, path, name, special_use, uidvalidity) VALUES ('work-trash', 'work', 'Trash', 'Trash', 'trash', '1')`);
+    engine.db.run(`UPDATE messages SET mailbox_id = 'work-trash' WHERE account_id = 'work'`);
+    const rows = engine.subscriptions.list();
+    expect(rows.find((r) => r.accountId === 'work')!.kept).toBe(0);
+    expect(rows.find((r) => r.accountId === 'perso')!.kept).toBe(1);
+  });
 });

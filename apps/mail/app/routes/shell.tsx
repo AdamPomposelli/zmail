@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { RetriageToast } from '@/components/retriage';
 import { Outlet, useLocation, useNavigate, useSearchParams } from 'react-router';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { AppSidebar } from '@/components/app-sidebar';
@@ -128,6 +129,7 @@ export default function Shell() {
 
   return (
     <div className="bg-sidebar flex h-dvh w-full overflow-hidden">
+      <RetriageToast />
       <AppSidebar onCompose={() => setCompose(true)} onAgent={() => setAgent((v) => !v)} agentOpen={agent} />
       <main className="flex min-w-0 flex-1 py-[var(--window-gap)] pr-[var(--window-gap)]">
         <div className="bg-background border-border rounded-panel border relative min-w-0 flex-1 overflow-hidden">

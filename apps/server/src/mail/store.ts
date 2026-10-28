@@ -3,6 +3,7 @@ import { json, type Database, type SQLInputValue } from '../db';
 import type { Address } from '../lib/address';
 import { hashId } from '../lib/ids';
 import { buildReplyTree, groupConversations, type TreeNode } from './reply-tree';
+import { evaluateAuth } from './auth';
 
 export type { SQLInputValue };
 
@@ -31,6 +32,7 @@ export type IncomingMessage = {
   precedence: string | null;
   autoSubmitted: string | null;
   spamHeader: string | null;
+  authResults?: string | null;
   size: number;
   isNew: boolean;
 };
@@ -64,6 +66,7 @@ export type MessageRow = {
   precedence: string | null;
   auto_submitted: string | null;
   spam_header: string | null;
+  auth_results: string | null;
   size: number;
   is_new: number;
 };
@@ -200,8 +203,8 @@ export class MailStore {
         `INSERT INTO messages (id, account_id, mailbox_id, uid, message_id, thread_id, in_reply_to, refs, subject,
           from_name, from_email, to_json, cc_json, reply_to, delivered_to, date, snippet, text_body, html_body,
           attachments, unread, starred, list_unsubscribe, list_unsubscribe_post, list_id, precedence, auto_submitted,
-          spam_header, size, is_new, created_at)
-         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+          spam_header, size, is_new, created_at, auth_results)
+         VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
         id,
         msg.accountId,
         msg.mailboxId,
@@ -233,6 +236,7 @@ export class MailStore {
         msg.size,
         msg.isNew ? 1 : 0,
         Date.now(),
+        msg.authResults ?? null,
       );
       this.db.run(
         'INSERT INTO messages_fts (message_pk, subject, sender, body) VALUES (?, ?, ?, ?)',
@@ -543,6 +547,8 @@ export class MailStore {
       starred: m.starred === 1,
       references: json<string[]>(m.refs, []),
       parentId: node.get(m.id)?.parentId ?? null,
+      deliveredTo: m.delivered_to,
+      auth: evaluateAuth(m.auth_results, m.from_email),
       depth: node.get(m.id)?.depth ?? 0,
       triage: toTriage(this.triage(m.id)),
     }));

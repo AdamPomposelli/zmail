@@ -72,6 +72,18 @@ export function createApp(engine: EngineContext, uiDir?: string) {
     });
   });
 
+  // « Download (.eml) » from the reader's message menu.
+  app.get('/api/messages/:id/source', async (c) => {
+    const row = engine.store.message(c.req.param('id'));
+    if (!row) return c.notFound();
+    const source = await engine.accounts.worker(row.account_id).source(row.id);
+    if (!source) return c.notFound();
+    const name = (row.subject || 'message').replace(/[\\/:*?"<>|]+/g, ' ').slice(0, 80).trim() || 'message';
+    return new Response(new Uint8Array(source), {
+      headers: { 'content-type': 'message/rfc822', 'content-disposition': `attachment; filename*=UTF-8''${encodeURIComponent(name)}.eml` },
+    });
+  });
+
   app.get('/api/messages/:id/cid/:cid', async (c) => {
     const row = engine.store.message(c.req.param('id'));
     if (!row) return c.notFound();

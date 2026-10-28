@@ -1,10 +1,11 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { CheckCircle2, Loader2, UserMinus, XCircle } from 'lucide-react';
+import { CheckCircle2, Loader2, Trash2, UserMinus, XCircle } from 'lucide-react';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { SenderAvatar } from '@/components/mail/chips';
 import { BrandLogo, brandForProvider } from '@/components/brand-logo';
 import { useCatalog } from '@/hooks/use-catalog';
+import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useTRPC, type Outputs } from '@/lib/trpc';
 import { formatListDate } from '@/lib/utils';
 import { t, tp } from '@/lib/i18n';
@@ -22,17 +23,55 @@ export default function Subscriptions() {
   const { data, isPending } = useQuery(trpc.mail.subscriptions.queryOptions());
   const [running, setRunning] = useState<string | null>(null);
   const unsubscribe = useMutation(trpc.mail.unsubscribe.mutationOptions());
+  const trashFromSender = useMutation(trpc.mail.trashFromSender.mutationOptions());
+  const restore = useMutation(trpc.mail.restore.mutationOptions());
+  // After an unsubscribe: offer to clear that sender's mails too (they go to the trash).
+  const [ask, setAsk] = useState<Subscription[] | null>(null);
+  const refresh = () => {
+    void queryClient.invalidateQueries({ queryKey: trpc.mail.subscriptions.queryKey() });
+    void queryClient.invalidateQueries({ queryKey: trpc.mail.list.pathKey() });
+    void queryClient.invalidateQueries({ queryKey: trpc.mail.counts.queryKey() });
+  };
 
-  const run = async (threadId: string, email: string, key = email) => {
-    setRunning(key);
+  const run = async (s: Subscription, quiet = false) => {
+    setRunning(`${s.accountId}|${s.fromEmail}`);
     try {
-      const outcome = await unsubscribe.mutateAsync({ threadId });
-      if (outcome.status === 'success') toast.success(t('Désinscrit de {email}', { email }), { description: outcome.detail });
-      else toast.error(t('Impossible pour {email}', { email }), { description: outcome.detail });
+      const outcome = await unsubscribe.mutateAsync({ threadId: s.threadId });
+      if (outcome.status !== 'success') toast.error(t('Impossible pour {email}', { email: s.fromEmail }), { description: outcome.detail });
+      else if (!quiet && s.kept === 0) toast.success(t('Désinscrit de {email}', { email: s.fromEmail }), { description: outcome.detail });
+      return outcome.status === 'success';
     } finally {
       setRunning(null);
-      void queryClient.invalidateQueries({ queryKey: trpc.mail.subscriptions.queryKey() });
+      refresh();
     }
+  };
+  const unsubscribeOne = async (s: Subscription) => {
+    if ((await run(s)) && s.kept > 0) setAsk([s]);
+  };
+  const unsubscribeAll = async (list: Subscription[]) => {
+    const done: Subscription[] = [];
+    for (const s of list) if (await run(s, true)) done.push(s);
+    if (done.some((s) => s.kept > 0)) setAsk(done.filter((s) => s.kept > 0));
+    else if (done.length) toast.success(tp(done.length, 'Désinscrit de {n} liste', 'Désinscrit de {n} listes'));
+  };
+  /** Moves every mail of these senders to the trash, with an undo. */
+  const deleteAll = async (list: Subscription[]) => {
+    setAsk(null);
+    const moved: string[] = [];
+    for (const s of list) {
+      setRunning(`${s.accountId}|${s.fromEmail}`);
+      try {
+        moved.push(...(await trashFromSender.mutateAsync({ accountId: s.accountId, fromEmail: s.fromEmail })).threadIds);
+      } catch (error) {
+        toast.error((error as Error).message);
+      }
+    }
+    setRunning(null);
+    refresh();
+    const mails = list.reduce((n, s) => n + s.kept, 0);
+    toast.success(tp(mails, '{n} mail à la corbeille', '{n} mails à la corbeille'), {
+      action: { label: t('Annuler|undo'), onClick: () => void restore.mutateAsync({ threadIds: moved }).then(refresh) },
+    });
   };
 
   // One section per mailbox, in the sidebar's order: at a glance, which address gets which list.
@@ -51,7 +90,14 @@ export default function Subscriptions() {
         <div className="flex min-w-0 items-center gap-3">
           <SenderAvatar name={s.fromName} email={s.fromEmail} size={28} />
           <div className="min-w-0">
-            <p className="truncate text-[13px] font-medium">{s.fromName || s.fromEmail}</p>
+            <p className="flex min-w-0 items-center gap-1.5 text-[13px] font-medium">
+              <span className="truncate">{s.fromName || s.fromEmail}</span>
+              {s.status === 'success' ? (
+                <span className="bg-success/10 text-success inline-flex h-[18px] shrink-0 items-center gap-1 rounded-full px-1.5 text-[10.5px] font-medium">
+                  <CheckCircle2 className="size-3" /> {t('Désinscrit')}
+                </span>
+              ) : null}
+            </p>
             <p className="text-muted-foreground truncate text-[11.5px]">
               {s.fromEmail} · {t('dernier {date}', { date: formatListDate(s.lastAt) })}
             </p>
@@ -61,15 +107,27 @@ export default function Subscriptions() {
         <span className={`text-right text-[13px] tabular-nums ${s.opened === 0 ? 'text-destructive' : ''}`}>{t('{n} %', { n: Math.round((s.opened / s.total) * 100) })}</span>
         <div className="flex justify-end">
           {s.status === 'success' ? (
-            <span className="flex items-center gap-1 text-[12.5px] text-success">
-              <CheckCircle2 className="size-3.5" /> {t('Désinscrit')}
-            </span>
+            s.kept > 0 ? (
+              <button
+                onClick={() => void deleteAll([s])}
+                disabled={running !== null}
+                title={tp(s.kept, 'Mettre son {n} mail à la corbeille', 'Mettre ses {n} mails à la corbeille')}
+                className="hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 flex h-7 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[12.5px] disabled:opacity-50"
+              >
+                {running === key ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                {t('Tout supprimer')}
+              </button>
+            ) : (
+              <span className="text-muted-foreground flex items-center gap-1 text-[12.5px]">
+                <CheckCircle2 className="size-3.5" /> {t('Nettoyé')}
+              </span>
+            )
           ) : s.status === 'failed' ? (
             <span className="flex items-center gap-1 text-[12.5px] text-destructive" title={s.detail ?? ''}>
               <XCircle className="size-3.5" /> {t('Échec')}
             </span>
           ) : s.canUnsubscribe ? (
-            <button onClick={() => void run(s.threadId, s.fromEmail, key)} disabled={running !== null} className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] border border-border hover:bg-accent hover:text-accent-foreground disabled:opacity-50">
+            <button onClick={() => void unsubscribeOne(s)} disabled={running !== null} className="flex h-7 items-center gap-1.5 rounded-lg px-2.5 text-[12.5px] border border-border hover:bg-accent hover:text-accent-foreground disabled:opacity-50">
               {running === key ? <Loader2 className="size-3 animate-spin" /> : <UserMinus className="size-3" />}
               {t('Se désinscrire')}
             </button>
@@ -112,9 +170,7 @@ export default function Subscriptions() {
                       <b className="font-semibold">{tp(neverOpened.length, '{n} liste', '{n} listes')}</b> {t('que vous n’ouvrez jamais.')}
                     </p>
                     <button
-                      onClick={async () => {
-                        for (const s of neverOpened) await run(s.threadId, s.fromEmail, `${s.accountId}|${s.fromEmail}`);
-                      }}
+                      onClick={() => void unsubscribeAll(neverOpened)}
                       disabled={running !== null}
                       className="bg-ai text-ai-foreground hover:bg-ai/90 h-8 rounded-lg px-3 text-[13px] font-medium disabled:opacity-50"
                     >
@@ -136,6 +192,30 @@ export default function Subscriptions() {
           })
         )}
       </div>
+      <Dialog open={ask !== null} onOpenChange={(open) => !open && setAsk(null)}>
+        <DialogContent showOverlay className="max-w-[420px]">
+          {ask ? (
+            <>
+              <DialogTitle className="text-[16px]">
+                {ask.length === 1
+                  ? tp(ask[0]!.kept, 'Supprimer aussi le mail de {name} ?', 'Supprimer aussi les {n} mails de {name} ?', { name: ask[0]!.fromName || ask[0]!.fromEmail })
+                  : tp(ask.reduce((n, s) => n + s.kept, 0), 'Supprimer aussi leur mail ?', 'Supprimer aussi leurs {n} mails ?')}
+              </DialogTitle>
+              <DialogDescription className="text-[13px]">
+                {ask.length === 1 ? t('Vous êtes désinscrit. Ses anciens mails partent à la corbeille, vous pourrez encore les récupérer.') : t('Vous êtes désinscrit de ces listes. Leurs anciens mails partent à la corbeille, vous pourrez encore les récupérer.')}
+              </DialogDescription>
+              <div className="mt-2 flex justify-end gap-2">
+                <button type="button" onClick={() => setAsk(null)} className="hover:bg-accent h-8 rounded-lg border border-border px-3 text-[13px]">
+                  {t('Garder')}
+                </button>
+                <button type="button" onClick={() => void deleteAll(ask)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90 flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium">
+                  <Trash2 className="size-3.5" /> {t('Supprimer')}
+                </button>
+              </div>
+            </>
+          ) : null}
+        </DialogContent>
+      </Dialog>
     </div>
   );
 }

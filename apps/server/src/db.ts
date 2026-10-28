@@ -239,6 +239,10 @@ const MIGRATIONS: string[] = [
   -- Built-in categories the user removed: hidden everywhere and no longer assigned, restorable.
   ALTER TABLE tags ADD COLUMN hidden INTEGER NOT NULL DEFAULT 0;
   `,
+  `
+  -- The receiving provider's SPF/DKIM/DMARC verdict (Authentication-Results), see mail/auth.ts.
+  ALTER TABLE messages ADD COLUMN auth_results TEXT;
+  `,
 ];
 
 export type Row = Record<string, unknown>;

@@ -19,7 +19,8 @@ import { cn, displayName, formatFullDate, isMac } from '@/lib/utils';
 import { SolarIcon } from '@/components/ui/solar-icon';
 import { t } from '@/lib/i18n';
 
-export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward';
+/** `editAsNew`: the message as a fresh draft (same recipients, subject and body), like Thunderbird. */
+export type ComposeMode = 'new' | 'reply' | 'replyAll' | 'forward' | 'editAsNew';
 
 type Attachment = { filename: string; contentType: string; base64: string; size: number; fromAssistant?: boolean };
 
@@ -50,6 +51,7 @@ export function Composer({ mode, thread, message, onClose, className }: { mode: 
     const replyTarget = message.replyTo ?? message.from.email;
     const subject = thread.subject.replace(/^(re|fwd?|tr)\s*:\s*/i, '');
     if (mode === 'forward') return { to: [], cc: [], subject: `Fwd: ${subject}`, accountId: message.accountId };
+    if (mode === 'editAsNew') return { to: message.to.map((a) => a.email), cc: message.cc.map((a) => a.email), subject: message.subject, accountId: message.accountId };
     const others = mode === 'replyAll' ? [...message.to, ...message.cc].map((a) => a.email).filter((e) => !mine.has(e) && e !== replyTarget) : [];
     return { to: mine.has(replyTarget) ? message.to.map((a) => a.email) : [replyTarget], cc: others, subject: `Re: ${subject}`, accountId: message.accountId };
   }, [mode, thread, message, catalog.accounts, catalog.accountById]);
@@ -65,7 +67,7 @@ export function Composer({ mode, thread, message, onClose, className }: { mode: 
 
   // Signature: the account's default (new mail vs. reply/forward), switchable from the toolbar.
   const signatures = useSignatures();
-  const kind = mode === 'new' ? 'newMail' : 'reply';
+  const kind = mode === 'new' || mode === 'editAsNew' ? 'newMail' : 'reply';
   const [signatureId, setSignatureId] = useState<string | null | undefined>(undefined);
   useEffect(() => {
     if (signatures.loaded) setSignatureId(signatures.defaultFor(accountId, kind));
@@ -77,7 +79,7 @@ export function Composer({ mode, thread, message, onClose, className }: { mode: 
 
   const editor = useEditor({
     extensions: [StarterKit, Link.configure({ openOnClick: false }), Placeholder.configure({ placeholder: mode === 'new' ? t('Écrivez votre message…') : t('Votre réponse…') })],
-    content: mode === 'forward' && message ? quote(message) : '',
+    content: mode === 'forward' && message ? quote(message) : mode === 'editAsNew' && message ? message.html || message.text.replace(/\n/g, '<br>') : '',
     immediatelyRender: false,
     editorProps: { attributes: { class: 'prose prose-sm dark:prose-invert max-w-none min-h-[140px] focus:outline-none text-[14px] leading-relaxed' } },
     autofocus: mode === 'new' ? false : 'start',
@@ -205,7 +207,7 @@ export function Composer({ mode, thread, message, onClose, className }: { mode: 
       ) : null}
       <div className={field}>
         <FieldLabel onFocus={() => toField.current?.focus()}>{t('À')}</FieldLabel>
-        <RecipientInput ref={toField} value={to} onChange={setTo} label={t('Destinataires')} autoFocus={mode === 'new' || mode === 'forward'} />
+        <RecipientInput ref={toField} value={to} onChange={setTo} label={t('Destinataires')} autoFocus={mode === 'new' || mode === 'forward' || mode === 'editAsNew'} />
         {!showCc ? (
           <button onClick={() => setShowCc(true)} className="text-muted-foreground hover:text-foreground text-xs">
             Cc
@@ -218,7 +220,7 @@ export function Composer({ mode, thread, message, onClose, className }: { mode: 
           <RecipientInput ref={ccField} value={cc} onChange={setCc} label={t('Copie à')} autoFocus={!initial.cc.length} />
         </div>
       ) : null}
-      {mode === 'new' || mode === 'forward' ? (
+      {mode === 'new' || mode === 'forward' || mode === 'editAsNew' ? (
         <div className={field}>
           <FieldLabel onFocus={() => subjectField.current?.focus()}>{t('Objet')}</FieldLabel>
           <input ref={subjectField} value={subject} onChange={(e) => setSubject(e.target.value)} aria-label={t('Objet')} className={cn(input, 'font-medium')} />

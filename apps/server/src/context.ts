@@ -1,4 +1,6 @@
 import { join } from 'node:path';
+import { log } from './lib/log';
+import { backfillAuthResults } from './mail/details';
 import { Database } from './db';
 import { Secrets } from './lib/secrets';
 import { NativeBridge } from './native/bridge';
@@ -87,7 +89,10 @@ export class EngineContext {
     const bridge = options.bridge ?? new NativeBridge();
     const secrets = options.secrets ?? (await Secrets.load(dataDir, bridge));
     const db = new Database(options.dbFile ?? join(dataDir, 'zmail.db'));
-    return new EngineContext(db, secrets, bridge, dataDir);
+    const ctx = new EngineContext(db, secrets, bridge, dataDir);
+    // Older mails: read their authentication results from the raw files, once, after startup.
+    setTimeout(() => void backfillAuthResults(ctx).catch((error) => log.warn('auth', 'backfill failed', error)), 8000).unref();
+    return ctx;
   }
 
   /** Called by account workers after a sync stored new messages. */

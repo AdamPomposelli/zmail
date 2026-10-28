@@ -34,6 +34,7 @@ import { BlockedImagesNotice, EmailBody } from './email-body';
 import { Composer, type ComposeMode } from './composer';
 import { BusinessBadge, PRIORITY_META, SenderAvatar, TagChip } from './chips';
 import { ReplyTree, type ReplyNode } from './reply-tree';
+import { AuthBadge, MessageInfo, MessageMenu } from './message-extras';
 import { useCatalog } from '@/hooks/use-catalog';
 import { useThreadActions, type ThreadAction } from '@/hooks/use-thread-actions';
 import { useTRPC, type Message, type Thread } from '@/lib/trpc';
@@ -488,7 +489,17 @@ function MessageCard({
   const catalog = useCatalog();
   const account = catalog.accountById.get(message.accountId);
   const files = message.attachments.filter((a) => !a.inline);
-  const recipients = [...message.to, ...message.cc].map((a) => (a.email === account?.email ? t('moi') : displayName(a))).join(', ');
+  // The user's own address shows as itself (not « moi »): in unified views, which mailbox got it.
+  const mine = new Set(catalog.accounts.flatMap((a) => [a.email, ...(a.aliases ?? [])]).map((e) => e.toLowerCase()));
+  const listed = [...message.to, ...message.cc];
+  const receivedOn = (message.deliveredTo && mine.has(message.deliveredTo.toLowerCase()) ? message.deliveredTo : listed.find((a) => mine.has(a.email))?.email) ?? account?.email ?? '';
+  const recipients = listed.map((a) => (mine.has(a.email) ? a.email : displayName(a))).join(', ');
+  const toLine = listed.some((a) => a.email === receivedOn.toLowerCase())
+    ? t('À {recipients}', { recipients })
+    : recipients
+      ? t('À {recipients} · reçu sur {address}', { recipients, address: receivedOn })
+      : t('Reçu sur {address}', { address: receivedOn });
+  const [info, setInfo] = useState(false);
 
   return (
     <article ref={card} data-message-id={message.id} className={cn('scroll-mt-4 rounded-xl border border-border transition', !open && 'hover:bg-accent/50')}>
@@ -497,6 +508,7 @@ function MessageCard({
         <div className="min-w-0 flex-1">
           <div className="flex items-baseline gap-2">
             <span className="truncate text-[13.5px] font-semibold">{displayName(message.from)}</span>
+            {message.mailbox !== 'sent' ? <AuthBadge auth={message.auth} /> : null}
             <span className="text-muted-foreground truncate text-xs">{message.from.email}</span>
             {unsubscribe ? (
               <>
@@ -506,7 +518,7 @@ function MessageCard({
             ) : null}
             {message.mailbox === 'sent' ? <span className="rounded-sm bg-primary/10 px-1 text-[10px] font-medium text-primary">{t('Envoyé')}</span> : null}
           </div>
-          <p className="text-muted-foreground truncate text-xs">{open ? t('À {recipients}', { recipients: recipients || '—' }) : message.text.replace(/\s+/g, ' ').slice(0, 140)}</p>
+          <p className="text-muted-foreground truncate text-xs">{open ? toLine : message.text.replace(/\s+/g, ' ').slice(0, 140)}</p>
           {/* When the mail it answers is not the one just above (a branch), say which one it is. */}
           {parent && parent.id !== previousId ? (
             <button
@@ -525,25 +537,9 @@ function MessageCard({
         <time className="text-muted-foreground shrink-0 text-xs" title={formatFullDate(message.date)}>
           {formatListDate(message.date)}
         </time>
-        {open ? (
-          <DropdownMenu>
-            <DropdownMenuTrigger onClick={(e) => e.stopPropagation()} className="text-muted-foreground hover:text-foreground flex size-7 items-center justify-center rounded-md hover:bg-accent">
-              <ChevronDown className="size-4" />
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end">
-              <DropdownMenuItem onClick={() => onReply('reply')}>
-                <Reply /> {t('Répondre')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onReply('replyAll')}>
-                <ReplyAll /> {t('Répondre à tous')}
-              </DropdownMenuItem>
-              <DropdownMenuItem onClick={() => onReply('forward')}>
-                <Forward /> {t('Transférer')}
-              </DropdownMenuItem>
-            </DropdownMenuContent>
-          </DropdownMenu>
-        ) : null}
+        {open ? <MessageMenu message={message} onReply={onReply} onInfo={() => setInfo((v) => !v)} infoOpen={info} /> : null}
       </header>
+      {open && info ? <MessageInfo id={message.id} /> : null}
       {open ? (
         <div className="px-4 pb-4">
           {blocked && !allowImages ? <BlockedImagesNotice onAllow={() => setAllowImages(true)} /> : null}

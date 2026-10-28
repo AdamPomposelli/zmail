@@ -1,4 +1,5 @@
 import type { Address } from '../lib/address';
+import { evaluateAuth } from '../mail/auth';
 import { detectPhishing } from './phishing';
 import type { AttachmentMeta, Priority, UnsubscribeInfo } from '../types';
 import { FREE_MAIL_DOMAINS, domainOf } from '../lib/address';
@@ -18,6 +19,8 @@ export type MailFeatures = {
   precedence: string | null;
   autoSubmitted: string | null;
   spamHeader: string | null;
+  /** Authentication-Results from the receiving provider (mail/auth.ts). */
+  authResults?: string | null;
   attachments: AttachmentMeta[];
 };
 
@@ -131,7 +134,10 @@ export function classifyHeuristically(features: MailFeatures): HeuristicResult {
   const spamText = has(RE.spam, subject, body.slice(0, 3000));
   const shouty = subject.length > 12 && subject === subject.toUpperCase() && /[A-Z]{6}/.test(subject) && (subject.match(/!/g)?.length ?? 0) >= 2;
   const phishing = detectPhishing({ fromName: features.from.name, fromEmail: sender, to: features.to.map((a) => a.email), subject, text: body });
-  const spam = spamHeader || spamText || shouty || phishing.phishing;
+  // DMARC failed: the provider could not confirm the mail comes from the sender's domain. Official
+  // senders publish DMARC, so a failure there is the classic sign of a spoofed « official » mail.
+  const spoofed = evaluateAuth(features.authResults ?? null, sender).dmarc === 'fail';
+  const spam = spamHeader || spamText || shouty || phishing.phishing || spoofed;
 
   let priority: Priority = 1;
   if (tags.has('marketing') || tags.has('newsletter') || (tags.has('notification') && !tags.has('security'))) priority = 0;
@@ -147,8 +153,8 @@ export function classifyHeuristically(features: MailFeatures): HeuristicResult {
     tags: [...tags],
     priority,
     spam,
-    spamReason: phishing.phishing ? phishing.reason : spamHeader ? t('Marqué comme spam par le serveur') : spamText ? t('Formulations typiques d’arnaque ou de spam') : shouty ? t('Objet agressif en majuscules') : null,
-    spamCertain: spamHeader || phishing.phishing,
+    spamReason: phishing.phishing ? phishing.reason : spoofed ? t('Expéditeur non authentifié : le domaine {domain} n’a pas signé ce mail (usurpation probable)', { domain: sender.split('@')[1] ?? '' }) : spamHeader ? t('Marqué comme spam par le serveur') : spamText ? t('Formulations typiques d’arnaque ou de spam') : shouty ? t('Objet agressif en majuscules') : null,
+    spamCertain: spamHeader || phishing.phishing || spoofed,
     opportunity,
     opportunityReason: opportunity ? t('Demande commerciale ou proposition détectée') : null,
     newsletter: newsletter || (promo && bulk),

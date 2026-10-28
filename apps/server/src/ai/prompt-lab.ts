@@ -75,6 +75,7 @@ const referenceFeatures = (c: TriageCase): MailFeatures => ({
   precedence: null,
   autoSubmitted: null,
   spamHeader: null,
+  authResults: null,
   attachments: [],
 });
 

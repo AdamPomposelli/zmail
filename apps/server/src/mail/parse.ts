@@ -22,6 +22,8 @@ export type ParsedEmail = {
   precedence: string | null;
   autoSubmitted: string | null;
   spamHeader: string | null;
+  /** The topmost Authentication-Results: the one the receiving provider added (mail/auth.ts). */
+  authResults: string | null;
 };
 
 const addresses = (value: AddressObject | AddressObject[] | undefined): Address[] =>
@@ -88,6 +90,7 @@ export async function parseEmail(source: Buffer | string): Promise<ParsedEmail> 
     listId: rawHeader(parsed, 'list-id'),
     precedence: rawHeader(parsed, 'precedence'),
     autoSubmitted: rawHeader(parsed, 'auto-submitted'),
+    authResults: rawHeader(parsed, 'authentication-results'),
     spamHeader: rawHeader(parsed, 'x-spam-flag') ?? rawHeader(parsed, 'x-spam-status'),
   };
 }

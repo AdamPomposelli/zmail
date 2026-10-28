@@ -13,4 +13,5 @@ export default {
   'Clé maître invalide ({n} octets au lieu de 32)': 'Invalid master key ({n} bytes instead of 32)',
   'Trousseau inaccessible : {error}': 'Keychain unavailable: {error}',
   'ZMail n’a pas pu déverrouiller vos clés.': 'ZMail could not unlock your keys.',
+  'Expéditeur non authentifié : le domaine {domain} n’a pas signé ce mail (usurpation probable)': 'Unauthenticated sender: {domain} did not sign this email (likely spoofing)',
 } satisfies Record<string, string>;

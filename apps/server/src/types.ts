@@ -94,6 +94,10 @@ export type MessageView = {
   references: string[];
   /** The message this one answers, when it is in the conversation. */
   parentId: string | null;
+  /** The user's address it arrived on (Delivered-To). */
+  deliveredTo: string | null;
+  /** Who really sent it: the provider's SPF/DKIM/DMARC verdict (mail/auth.ts). */
+  auth: import('./mail/auth').AuthVerdict;
   depth: number;
   triage: Triage | null;
 };

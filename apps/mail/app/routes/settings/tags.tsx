@@ -9,6 +9,7 @@ import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
 import { TagChip } from '@/components/mail/chips';
 import { CategoryPacks } from '@/components/category-packs';
+import { RetriageButton, RetriagePanel } from '@/components/retriage';
 import { Card, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
 import { useCatalog } from '@/hooks/use-catalog';
 import { useTRPC, type Tag } from '@/lib/trpc';
@@ -34,7 +35,6 @@ export default function TagSettings() {
   // Template categories not added yet are offered in « Modèles », not listed as removed.
   const inPacks = new Set<string>(packs?.flatMap((p) => p.tags.map((x) => x.id)) ?? []);
   const hidden = allHidden?.filter((tag) => !inPacks.has(tag.id));
-  const retriage = useMutation(trpc.ai.retriageAll.mutationOptions({ onSuccess: (n) => toast.success(tp(n, '{n} mail en cours de reclassement', '{n} mails en cours de reclassement')) }));
   const system = catalog.tags.filter((tag) => tag.kind === 'system');
   const custom = catalog.tags.filter((tag) => tag.kind === 'custom');
 
@@ -77,7 +77,7 @@ export default function TagSettings() {
       description={t('L’IA range chaque mail dans des catégories génériques et vos catégories personnalisées. Décrivez une catégorie en langage naturel : la description sert de consigne au modèle.')}
       actions={
         <div className="flex gap-2">
-          <GhostButton onClick={() => retriage.mutate()}>{t('Reclasser tout')}</GhostButton>
+          <RetriageButton />
           <PrimaryButton onClick={() => setDraft({ name: '', color: PALETTE[custom.length % PALETTE.length]!, description: '', icon: 'tag' })}>
             <Plus className="size-4" />
             {t('Nouvelle catégorie')}
@@ -85,6 +85,7 @@ export default function TagSettings() {
         </div>
       }
     >
+      <RetriagePanel />
       <Card title={t('Mes catégories')} description={t('Créées par vous ou par l’agent.')}>
         {custom.length ? <ul className="-my-1 divide-y divide-border">{custom.map(row)}</ul> : <p className="text-muted-foreground text-[13px]">{t('Aucun tag personnalisé pour l’instant.')}</p>}
       </Card>

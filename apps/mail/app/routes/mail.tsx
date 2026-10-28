@@ -1,4 +1,4 @@
-import { useCallback, useRef, useState } from 'react';
+import { useCallback, useEffect, useRef, useState } from 'react';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { ResizableHandle, ResizablePanel, ResizablePanelGroup } from '@/components/ui/resizable';
 import { ThreadList } from '@/components/mail/thread-list';
@@ -49,7 +49,18 @@ export default function MailScreen() {
     if (route.threadId) route.update({ thread: items.current[next]?.id ?? null }, true);
   }, { preventDefault: true }, [focusIndex, route]);
   useHotkeys('enter, o', () => route.update({ thread: items.current[focusIndex]?.id ?? null }), { preventDefault: true }, [focusIndex, route]);
-  useHotkeys('escape', () => (selection.length ? setSelection([]) : route.update({ thread: null })), { preventDefault: true }, [selection, route]);
+  // Échap closes a dialog or menu first (source, confirmation…), never the conversation behind it
+  // as well. The dialog is already gone when this shortcut runs, so its presence is noted earlier,
+  // at the very start of the key press (window, capture phase).
+  const escapeClosedLayer = useRef(false);
+  useEffect(() => {
+    const note = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') escapeClosedLayer.current = Boolean(document.querySelector('[role="dialog"], [role="alertdialog"], [role="menu"]'));
+    };
+    window.addEventListener('keydown', note, { capture: true });
+    return () => window.removeEventListener('keydown', note, { capture: true });
+  }, []);
+  useHotkeys('escape', () => (escapeClosedLayer.current ? undefined : selection.length ? setSelection([]) : route.update({ thread: null })), { preventDefault: true }, [selection, route]);
   useHotkeys('e', () => act('archive'), { preventDefault: true }, [selection, route, focusIndex]);
   useHotkeys('shift+3, delete, backspace', () => act('trash'), { preventDefault: true }, [selection, route, focusIndex]);
   useHotkeys('shift+1', () => act('spam'), { preventDefault: true }, [selection, route, focusIndex]);

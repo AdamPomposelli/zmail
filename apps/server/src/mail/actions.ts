@@ -152,6 +152,23 @@ export class MailActions {
     this.changed(threadIds);
   }
 
+  /** One message of a conversation, not the whole conversation (the reader's message menu). */
+  async archiveMessage(id: string) {
+    const msg = this.ctx.store.message(id);
+    if (!msg) return;
+    await this.moveTo([msg as unknown as Located].filter((m) => m.special_use === 'inbox'), 'archive');
+    this.changed([msg.thread_id]);
+  }
+
+  async trashMessage(id: string) {
+    const msg = this.ctx.store.message(id);
+    if (!msg) return;
+    // Gmail keeps a copy per label: every copy of this mail goes, not the rest of the conversation.
+    const copies = this.messages([msg.thread_id], (m) => (m.message_id ? m.message_id === msg.message_id : m.id === id) && m.special_use !== 'trash');
+    await this.moveTo(copies, 'trash');
+    this.changed([msg.thread_id]);
+  }
+
   async restore(threadIds: string[], source: ActionSource = 'user') {
     this.learn('restore', threadIds, source);
     const msgs = this.messages(threadIds, (m) => ['trash', 'junk', 'archive', 'all'].includes(m.special_use ?? ''));

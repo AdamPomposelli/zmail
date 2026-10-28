@@ -26,6 +26,7 @@ export const featuresOf = (row: MessageRow): MailFeatures => ({
   precedence: row.precedence,
   autoSubmitted: row.auto_submitted,
   spamHeader: row.spam_header,
+  authResults: row.auth_results,
   attachments: json(row.attachments, []),
 });
 
@@ -33,8 +34,20 @@ export const featuresOf = (row: MessageRow): MailFeatures => ({
  * The arrival pipeline every incoming mail goes through: business assignment, classification
  * (model when available, heuristics otherwise), OTP extraction, rules, then notifications.
  */
+/** A « Relancer le tri IA » run: every mail re-read by the AI, followed from Settings. */
+export type RetriageRun = {
+  total: number;
+  done: number;
+  /** Mails whose category, priority, spam or code changed. */
+  changed: number;
+  startedAt: number;
+  finishedAt: number | null;
+  cancelled: boolean;
+};
+
 export class TriagePipeline {
   private queue: { id: string; force: boolean }[] = [];
+  private batch: { run: RetriageRun; ids: Set<string> } | null = null;
   private queued = new Set<string>();
   private running = 0;
   private idleWaiters: (() => void)[] = [];
@@ -51,6 +64,54 @@ export class TriagePipeline {
     this.pump();
   }
 
+  /**
+   * Re-reads every mail the AI sorted (the user's own corrections are kept) with the current
+   * mode, categories and rules: inbox first, newest first, so the visible part changes first.
+   */
+  retriageAll(): RetriageRun {
+    if (this.batch && !this.batch.run.finishedAt) return this.batch.run;
+    const ids = this.ctx.db
+      .all<{ message_id: string }>(
+        `SELECT t.message_id FROM triage t JOIN messages m ON m.id = t.message_id JOIN mailboxes mb ON mb.id = m.mailbox_id
+         WHERE t.user_override = 0 AND mb.special_use NOT IN ('sent', 'drafts')
+         ORDER BY CASE mb.special_use WHEN 'inbox' THEN 0 ELSE 1 END, m.date DESC`,
+      )
+      .map((r) => r.message_id);
+    const run: RetriageRun = { total: ids.length, done: 0, changed: 0, startedAt: Date.now(), finishedAt: ids.length ? null : Date.now(), cancelled: false };
+    this.batch = { run, ids: new Set(ids) };
+    this.enqueue(ids, true);
+    return run;
+  }
+
+  retriageStatus(): RetriageRun | null {
+    return this.batch?.run ?? null;
+  }
+
+  /** Stops a run: what is done stays done, the rest keeps its previous sorting. */
+  cancelRetriage() {
+    const batch = this.batch;
+    if (!batch || batch.run.finishedAt) return batch?.run ?? null;
+    this.queue = this.queue.filter((job) => {
+      if (!batch.ids.has(job.id)) return true;
+      this.queued.delete(job.id);
+      batch.ids.delete(job.id);
+      return false;
+    });
+    batch.run.cancelled = true;
+    // Only the mails being read right now are left; it ends with them.
+    if (batch.ids.size === 0) batch.run.finishedAt = Date.now();
+    return batch.run;
+  }
+
+  private batchProgress(id: string, changed: boolean) {
+    const batch = this.batch;
+    if (!batch || !batch.ids.has(id) || batch.run.finishedAt) return;
+    batch.ids.delete(id);
+    batch.run.done++;
+    if (changed) batch.run.changed++;
+    if (batch.ids.size === 0) batch.run.finishedAt = Date.now();
+  }
+
   /** Resolves once the queue is drained (used by tests and the seed script). */
   idle(): Promise<void> {
     if (this.running === 0 && this.queue.length === 0) return Promise.resolve();
@@ -61,9 +122,11 @@ export class TriagePipeline {
     while (this.running < this.concurrency && this.queue.length > 0) {
       const job = this.queue.shift()!;
       this.running++;
-      this.process(job.id, job.force)
+      let changed = false;
+      this.process(job.id, job.force, (c) => (changed = c))
         .catch((error) => log.error('pipeline', job.id, (error as Error).stack ?? error))
         .finally(() => {
+          this.batchProgress(job.id, changed);
           this.running--;
           this.queued.delete(job.id);
           if (this.running === 0 && this.queue.length === 0) {
@@ -76,7 +139,7 @@ export class TriagePipeline {
     }
   }
 
-  async process(messageId: string, force = false): Promise<Triage | null> {
+  async process(messageId: string, force = false, onChanged?: (changed: boolean) => void): Promise<Triage | null> {
     const row = this.ctx.store.message(messageId);
     if (!row || row.special_use === 'sent' || row.special_use === 'drafts') return null;
     const existing = this.ctx.store.triage(messageId);
@@ -95,9 +158,14 @@ export class TriagePipeline {
       triage.rulesApplied = fired.map((r) => r.id);
     }
     this.ctx.store.saveTriage(messageId, triage);
+    if (existing && onChanged) {
+      const before = toTriage(existing);
+      onChanged(Boolean(before) && (before!.priority !== triage.priority || before!.spam !== triage.spam || before!.otp !== triage.otp || [...before!.tags].sort().join() !== [...triage.tags].sort().join()));
+    }
     await this.runMailboxActions(row, triage, fired);
     await this.ctx.serverSync.aiSorted(messageId, triage, toTriage(existing)).catch((error) => log.warn('pipeline', 'server sync', (error as Error).message));
-    if (row.is_new === 1) await this.notify(row, triage, fired);
+    // Only the first sorting of a mail that just arrived notifies: re-sorting never does again.
+    if (row.is_new === 1 && !existing) await this.notify(row, triage, fired);
     return triage;
   }
 

@@ -20,6 +20,8 @@ export type SubscriptionRow = {
   canUnsubscribe: boolean;
   status: 'subscribed' | 'success' | 'failed' | 'pending';
   detail: string | null;
+  /** Mails from this sender still outside the trash (what « Delete all » would remove). */
+  kept: number;
 };
 
 export class Subscriptions {
@@ -109,21 +111,22 @@ export class Subscriptions {
       account_id: string;
       thread_id: string;
       unsub: string | null;
+      kept: number;
     }>(
       `WITH copies AS (
          SELECT m.account_id, m.from_email, m.from_name, m.date, m.thread_id, m.unread, t.unsubscribe,
-           COALESCE(m.message_id, m.id) AS mail
+           COALESCE(m.message_id, m.id) AS mail, CASE WHEN mb.special_use = 'trash' THEN 1 ELSE 0 END AS trashed
          FROM messages m JOIN triage t ON t.message_id = m.id JOIN mailboxes mb ON mb.id = m.mailbox_id
          WHERE t.newsletter = 1 AND mb.special_use IN ('inbox', 'archive', 'all', 'trash')
        ), mails AS (
          SELECT account_id, from_email, mail, MAX(from_name) AS from_name, MAX(date) AS date, MIN(unread) AS unread,
-           MAX(unsubscribe) AS unsubscribe, MAX(thread_id) AS thread_id
+           MAX(unsubscribe) AS unsubscribe, MAX(thread_id) AS thread_id, MIN(trashed) AS trashed
          FROM copies GROUP BY account_id, from_email, mail
        )
        SELECT account_id, from_email, MAX(from_name) AS from_name, COUNT(*) AS total,
          SUM(CASE WHEN unread = 0 THEN 1 ELSE 0 END) AS opened, SUM(unread) AS unread, MAX(date) AS last_at,
          (SELECT x.thread_id FROM mails x WHERE x.account_id = mails.account_id AND x.from_email = mails.from_email ORDER BY x.date DESC LIMIT 1) AS thread_id,
-         MAX(unsubscribe) AS unsub
+         MAX(unsubscribe) AS unsub, SUM(1 - trashed) AS kept
        FROM mails GROUP BY account_id, from_email ORDER BY total DESC LIMIT 400`,
     );
     // Latest attempt per mailbox and sender (older rows without an account apply to all of them).
@@ -146,8 +149,27 @@ export class Subscriptions {
         canUnsubscribe: json(s.unsub, null) !== null,
         status: (status?.status as SubscriptionRow['status']) ?? 'subscribed',
         detail: status?.detail ?? null,
+        kept: s.kept,
       };
     });
+  }
+
+  /**
+   * Moves every mail of one sender on one mailbox to the trash (« Delete all » after an
+   * unsubscribe). Returns the conversations moved, so the UI can offer to undo.
+   */
+  async trashFromSender(accountId: string, fromEmail: string) {
+    const threadIds = this.ctx.db
+      .all<{ thread_id: string }>(
+        `SELECT DISTINCT m.thread_id FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
+         WHERE m.account_id = ? AND m.from_email = ? AND COALESCE(mb.special_use, '') NOT IN ('trash', 'sent', 'drafts')`,
+        accountId,
+        fromEmail,
+      )
+      .map((r) => r.thread_id);
+    // Not a habit to learn from (no « always delete this sender » suggestion): the list is gone already.
+    if (threadIds.length) await this.ctx.actions.trash(threadIds, 'agent');
+    return { threadIds };
   }
 
   history() {

@@ -1,4 +1,5 @@
 import { initTRPC, TRPCError } from '@trpc/server';
+import { messageDetails, messageSource } from '../mail/details';
 import { PRESET_IDS, PRESET_MEASURES } from '../ai/presets';
 import superjson from 'superjson';
 import { z } from 'zod';
@@ -135,6 +136,17 @@ const mailRouter = router({
   }),
   unsubscribe: procedure.input(z.object({ threadId: z.string() })).mutation(({ ctx, input }) => ctx.engine.subscriptions.unsubscribe(input.threadId)),
   subscriptions: procedure.query(({ ctx }) => ctx.engine.subscriptions.list()),
+  details: procedure.input(z.object({ id: z.string() })).query(({ ctx, input }) => messageDetails(ctx.engine, input.id)),
+  source: procedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
+    const raw = await messageSource(ctx.engine, input.id);
+    // Up to 2 MB as text; the full file stays downloadable (.eml).
+    return raw ? { text: raw.subarray(0, 2 * 1024 * 1024).toString('utf8'), truncated: raw.length > 2 * 1024 * 1024 } : null;
+  }),
+  archiveMessage: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.actions.archiveMessage(input.id)),
+  trashMessage: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.actions.trashMessage(input.id)),
+  trashFromSender: procedure
+    .input(z.object({ accountId: z.string(), fromEmail: z.string() }))
+    .mutation(({ ctx, input }) => ctx.engine.subscriptions.trashFromSender(input.accountId, input.fromEmail)),
   send: procedure
     .input(
       z.object({
@@ -436,11 +448,9 @@ const aiRouter = router({
   chat: procedure
     .input(z.object({ message: z.string().min(1), history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).default([]) }))
     .mutation(({ ctx, input }) => ctx.engine.agent.chat(input.message, input.history)),
-  retriageAll: procedure.mutation(({ ctx }) => {
-    const ids = ctx.engine.db.all<{ message_id: string }>('SELECT message_id FROM triage WHERE user_override = 0').map((r) => r.message_id);
-    ctx.engine.pipeline.enqueue(ids, true);
-    return ids.length;
-  }),
+  retriageAll: procedure.mutation(({ ctx }) => ctx.engine.pipeline.retriageAll()),
+  retriageStatus: procedure.query(({ ctx }) => ctx.engine.pipeline.retriageStatus()),
+  cancelRetriage: procedure.mutation(({ ctx }) => ctx.engine.pipeline.cancelRetriage()),
 });
 
 const promptAction = z.enum(['triage', 'chat', 'unsubscribe']);
