@@ -3,6 +3,7 @@ import { useCallback } from 'react';
 import { toast } from 'sonner';
 import { useTRPC, type Outputs, type ThreadItem } from '@/lib/trpc';
 import { t } from '@/lib/i18n';
+import { flushViews } from '@/lib/track';
 
 type ListPage = Outputs['mail']['list'];
 
@@ -68,6 +69,8 @@ export function useThreadActions() {
   const run = useCallback(
     async (action: ThreadAction, threadIds: string[], options: { silent?: boolean } = {}) => {
       if (threadIds.length === 0) return;
+      // The reading of the conversation on screen is logged before what is done with it.
+      flushViews(threadIds);
       const rollback = REMOVES.includes(action)
         ? patchLists(threadIds, () => null)
         : patchLists(threadIds, (item) => ({

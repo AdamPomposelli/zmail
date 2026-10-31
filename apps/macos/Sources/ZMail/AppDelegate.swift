@@ -20,7 +20,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installSignalHandlers()
         notifications.setUp()
         notifications.onOpen = { [weak self] threadId in self?.openThread(threadId) }
+        CodeCard.shared.onOpen = { [weak self] threadId in self?.openThread(threadId) }
         startZippyBar()
+        Updater.shared.start()
         NotificationCenter.default.addObserver(forName: L10n.didChange, object: nil, queue: .main) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
@@ -105,6 +107,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func showWindow(context: NativeContext) {
         let wc = MainWindowController(context: context)
         wc.onBadge = { DockBadge.set($0) }
+        Updater.shared.onChange = { [weak wc] json in wc?.send(event: "zmail:update", json: json) }
         windowController = wc
         // Locked from the first frame: Touch ID before any mail shows (present() asks for it).
         if AppLock.shared.active { wc.setLock(AppLock.shared.state) }
@@ -123,6 +126,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     func applicationDidUnhide(_ notification: Notification) { windowController?.present() }
 
     func applicationWillTerminate(_ notification: Notification) {
+        Updater.shared.installOnQuit()
         zippyBar?.stop()
         engine?.stop()
         bridge?.stop()
@@ -178,6 +182,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc func lockNow(_ sender: Any?) {
         AppLock.shared.lock()
+    }
+
+    @objc func checkForUpdates(_ sender: Any?) {
+        windowController?.present()
+        Updater.shared.check(userInitiated: true)
     }
 
     @objc func openSettings(_ sender: Any?) {
@@ -244,6 +253,8 @@ enum MenuBuilder {
         let appMenu = NSMenu(title: "ZMail")
         appMenu.addItem(withTitle: L10n.tr("À propos de ZMail", "About ZMail"),
                         action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: "")
+        let updates = appMenu.addItem(withTitle: L10n.tr("Rechercher des mises à jour…", "Check for Updates…"), action: #selector(AppDelegate.checkForUpdates(_:)), keyEquivalent: "")
+        updates.target = target
         appMenu.addItem(.separator())
         let settings = appMenu.addItem(withTitle: L10n.tr("Réglages…", "Settings…"), action: #selector(AppDelegate.openSettings(_:)), keyEquivalent: ",")
         settings.target = target

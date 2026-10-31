@@ -88,7 +88,7 @@ export class Notifier {
       input.otp ?? null,
       delivered,
     );
-    bus.emitEvent({ type: 'notification', id, kind: input.kind, title: input.title, body: input.body, otp: input.otp, threadId: input.threadId });
+    bus.emitEvent({ type: 'notification', id, kind: input.kind, title: input.title, body: input.body, otp: input.otp, threadId: input.threadId, delivered });
     return { id, delivered };
   }
 

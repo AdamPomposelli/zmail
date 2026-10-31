@@ -197,6 +197,8 @@ export class AiRouter {
   readonly catalog: ModelCatalog;
   /** Test hook: replaces provider resolution. */
   override: ((task: Capability) => LlmClient[]) | null = null;
+  /** Called when a capability is left with no model at all in the chosen mode (e.g. the free model became paid). */
+  onNoModel: ((capability: Capability, preset: Preset) => void) | null = null;
 
   constructor(
     private readonly db: Database,
@@ -269,6 +271,9 @@ export class AiRouter {
       // A manual choice replaces the double check: the user asked for that model.
       return { capability, preset, candidates: [pinned, ...route.candidates.filter((c) => !(c.providerId === pinned.providerId && c.model === pinned.model))] };
     }
+    // A cloud service is connected but no model fits this mode: ZMail falls back to its engine
+    // without AI. Say so instead of degrading in silence.
+    if (!route.candidates.length && providers.length) this.onNoModel?.(capability, preset);
     return { capability, preset, candidates: route.candidates, consensus: route.consensus };
   }
 

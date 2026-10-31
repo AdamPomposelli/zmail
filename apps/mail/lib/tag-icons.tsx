@@ -74,6 +74,9 @@ export function TagIcon({
   className?: string;
   mono?: boolean;
 }) {
+  // Your own: an emoji, or an image (PNG, SVG, an animated GIF…) shown as it is.
+  const custom = customIcon(icon, className);
+  if (custom) return custom;
   const Icon = icon ? TAG_ICONS[icon] : undefined;
   if (!Icon)
     return (
@@ -83,4 +86,19 @@ export function TagIcon({
       />
     );
   return <Icon className={cn('size-4 shrink-0', className)} style={mono ? undefined : { color }} />;
+}
+
+/**
+ * Icons people pick themselves, shared by categories, the fixed views and accounts:
+ * « emoji:🎯 » or « image:data:image/… » (an uploaded PNG, JPEG, SVG, WebP or GIF).
+ */
+export function customIcon(icon: string | null | undefined, className?: string, size = 16) {
+  if (icon?.startsWith('emoji:'))
+    return (
+      <span className={cn('flex shrink-0 items-center justify-center leading-none', className)} style={{ width: size, height: size, fontSize: size * 0.9 }}>
+        {icon.slice(6)}
+      </span>
+    );
+  if (icon?.startsWith('image:data:image/')) return <img src={icon.slice(6)} alt="" className={cn('shrink-0 rounded-[3px] object-contain', className)} style={{ width: size, height: size }} />;
+  return null;
 }

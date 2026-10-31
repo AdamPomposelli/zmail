@@ -7,7 +7,7 @@ import { GhostButton } from '@/components/settings/ui';
 import { formatDuration } from '@/lib/savings';
 import { useTRPC, type Outputs } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
-import { num, t, tp } from '@/lib/i18n';
+import { intlLocale, num, t, tp } from '@/lib/i18n';
 
 type Run = NonNullable<Outputs['ai']['retriageStatus']>;
 
@@ -50,18 +50,34 @@ export function RetriageButton() {
   );
 }
 
-/** Progress while it runs, then what changed. Closable once finished. */
+/** « il y a 3 min », « à l’instant ». */
+export function ago(at: number) {
+  const seconds = Math.round((Date.now() - at) / 1000);
+  if (seconds < 45) return t('à l’instant');
+  const rtf = new Intl.RelativeTimeFormat(intlLocale, { numeric: 'auto' });
+  for (const [unit, size] of [['day', 86400], ['hour', 3600], ['minute', 60]] as const) if (seconds >= size) return rtf.format(-Math.floor(seconds / size), unit);
+  return rtf.format(-seconds, 'second');
+}
+
+/**
+ * Progress while it runs, then what it did and when: the last run stays shown (it is kept across
+ * restarts), so « Relancer » always answers, even when it is over in a blink.
+ */
 export function RetriagePanel({ className }: { className?: string }) {
   const { run, isRunning, cancel } = useRetriage();
   const [closed, setClosed] = useState<number | null>(null);
+  // Re-renders the « il y a … » every half minute.
+  const [, tick] = useState(0);
+  useEffect(() => {
+    const id = setInterval(() => tick((n) => n + 1), 30_000);
+    return () => clearInterval(id);
+  }, []);
   if (!run || closed === run.startedAt) return null;
-  // A finished run stays visible a while, then leaves.
-  if (!isRunning && run.finishedAt && Date.now() - run.finishedAt > 10 * 60_000) return null;
   const percent = Math.floor((run.done / Math.max(run.total, 1)) * 100);
   const eta = isRunning ? remaining(run) : null;
 
   return (
-    <section className={cn('border-border bg-card rounded-xl border px-5 py-4', className)}>
+    <section key={run.startedAt} className={cn('border-border bg-card animate-in fade-in slide-in-from-top-1 rounded-xl border px-5 py-4 duration-300', className)}>
       <div className="flex items-start gap-3">
         <span className={cn('mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full', isRunning ? 'bg-ai/10 text-ai' : 'bg-success/10 text-success')}>
           {isRunning ? <Loader2 className="size-4 animate-spin" /> : <Check className="size-4" />}
@@ -72,14 +88,21 @@ export function RetriagePanel({ className }: { className?: string }) {
               ? t('L’IA relit vos mails : {done} sur {total}', { done: num(run.done), total: num(run.total) })
               : run.cancelled
                 ? t('Tri IA arrêté : {done} mails relus sur {total}', { done: num(run.done), total: num(run.total) })
-                : tp(run.total, 'Tri IA terminé : {n} mail relu', 'Tri IA terminé : {n} mails relus')}
+                : run.total === 0
+                  ? t('Tri relancé : aucun mail à relire')
+                  : tp(run.total, 'Tri terminé : {n} mail relu', 'Tri terminé : {n} mails relus')}
+            {!isRunning && run.finishedAt ? <span className="text-muted-foreground font-normal"> · {ago(run.finishedAt)}</span> : null}
           </p>
           <p className="text-muted-foreground mt-0.5 text-[12.5px]">
             {isRunning
               ? t('Catégories, priorité, spam, codes et résumés sont recalculés avec le mode et les catégories actuels. Vos corrections manuelles sont gardées. Vous pouvez continuer à utiliser ZMail.')
-              : run.changed
-                ? tp(run.changed, '{n} mail a changé de catégorie, de priorité ou de statut spam.', '{n} mails ont changé de catégorie, de priorité ou de statut spam.')
-                : t('Aucun changement : vos mails étaient déjà bien triés.')}
+              : run.localOnly
+                ? t('Sans modèle d’IA disponible dans ce mode, seules les règles locales de ZMail ont relu les mails qu’elles avaient triés ; ceux triés par une IA gardent ce tri.') +
+                  ' ' +
+                  (run.changed ? tp(run.changed, '{n} a changé.', '{n} ont changé.') : t('Aucun changement.'))
+                : run.changed
+                  ? tp(run.changed, '{n} mail a changé de catégorie, de priorité ou de statut spam.', '{n} mails ont changé de catégorie, de priorité ou de statut spam.')
+                  : t('Aucun changement : vos mails étaient déjà bien triés.')}
           </p>
           {isRunning ? (
             <>

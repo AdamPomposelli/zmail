@@ -7,6 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
 import { BrandLogo, brandForProvider } from '@/components/brand-logo';
 import { useTRPC, type Outputs } from '@/lib/trpc';
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
+import { useCatalog } from '@/hooks/use-catalog';
 import { cn } from '@/lib/utils';
 import { t } from '@/lib/i18n';
 
@@ -20,7 +22,9 @@ type Server = { host: string; port: string; secure: boolean };
 export function AccountEditDialog({ account, open, onOpenChange, focus }: { account: Account | null; open: boolean; onOpenChange: (o: boolean) => void; focus?: 'connection' }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
+  const catalog = useCatalog();
   const [label, setLabel] = useState('');
+  const [businessId, setBusinessId] = useState<string | null>(null);
   const [name, setName] = useState('');
   const [imap, setImap] = useState<Server>({ host: '', port: '993', secure: true });
   const [smtp, setSmtp] = useState<Server>({ host: '', port: '465', secure: true });
@@ -29,6 +33,7 @@ export function AccountEditDialog({ account, open, onOpenChange, focus }: { acco
   useEffect(() => {
     if (!account || !open) return;
     setLabel(account.label ?? '');
+    setBusinessId(account.businessId ?? null);
     setName(account.name);
     setImap({ host: account.imapHost, port: String(account.imapPort), secure: account.imapSecure });
     setSmtp({ host: account.smtpHost, port: String(account.smtpPort), secure: account.smtpSecure });
@@ -55,6 +60,8 @@ export function AccountEditDialog({ account, open, onOpenChange, focus }: { acco
     trpc.accounts.update.mutationOptions({
       onSuccess: () => {
         void queryClient.invalidateQueries({ queryKey: trpc.accounts.list.queryKey() });
+        void queryClient.invalidateQueries({ queryKey: trpc.mail.list.pathKey() });
+        void queryClient.invalidateQueries({ queryKey: trpc.mail.counts.queryKey() });
         onOpenChange(false);
         toast.success(connectionChanged ? t('Compte enregistré, reconnexion en cours') : t('Compte enregistré'));
       },
@@ -70,7 +77,7 @@ export function AccountEditDialog({ account, open, onOpenChange, focus }: { acco
       const result = await test.mutateAsync({ id: account.id, patch: { ...connection, password: password || undefined } });
       if (!result.imap.ok || !result.smtp.ok) return;
     }
-    save.mutate({ id: account.id, patch: { label: label.trim() || null, name: name.trim(), ...(connectionChanged ? { ...connection, ...(password ? { password } : {}) } : {}) } });
+    save.mutate({ id: account.id, patch: { label: label.trim() || null, name: name.trim(), businessId, ...(connectionChanged ? { ...connection, ...(password ? { password } : {}) } : {}) } });
   };
 
   const server = (title: string, value: Server, set: (s: Server) => void) => (
@@ -99,7 +106,8 @@ export function AccountEditDialog({ account, open, onOpenChange, focus }: { acco
         </DialogTitle>
         <DialogDescription className="sr-only">{t('Nom du compte, nom d’expéditeur et connexion')}</DialogDescription>
         <form
-          className="space-y-5"
+          // A little inner margin so the focus rings are never cut by the scrolling edge.
+          className="-mx-1 space-y-5 px-1"
           onSubmit={(e) => {
             e.preventDefault();
             void submit();
@@ -117,6 +125,24 @@ export function AccountEditDialog({ account, open, onOpenChange, focus }: { acco
               <span className="text-muted-foreground block text-[11px]">{t('Ce que voient vos destinataires.')}</span>
             </label>
           </div>
+
+          <label className="block space-y-1.5">
+            <span className="text-[12px] font-medium">{t('Business')}</span>
+            <Select value={businessId ?? 'personal'} onValueChange={(v) => setBusinessId(v === 'personal' ? null : v)}>
+              <SelectTrigger className="h-8 w-full">
+                <SelectValue />
+              </SelectTrigger>
+              <SelectContent>
+                <SelectItem value="personal">{t('Personnel (aucun business)')}</SelectItem>
+                {catalog.businesses.map((b) => (
+                  <SelectItem key={b.id} value={b.id}>
+                    {`${b.emoji ?? ''} ${b.name}`.trim()}
+                  </SelectItem>
+                ))}
+              </SelectContent>
+            </Select>
+            <span className="text-muted-foreground block text-[11px]">{t('Les mails reçus sur ce compte sont rattachés à ce business. Créez-en un en bas de la page Comptes.')}</span>
+          </label>
 
           <fieldset className="space-y-3 rounded-lg border border-border p-3">
             <legend className="px-1 text-[12.5px] font-semibold">{t('Connexion')}</legend>

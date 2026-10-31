@@ -13,6 +13,9 @@ import { formatListDate } from '@/lib/utils';
 import { t } from '@/lib/i18n';
 import { BrandLogo, brandForProvider } from '@/components/brand-logo';
 import { AccountEditDialog } from '@/components/settings/account-edit-dialog';
+import { AccountIcon } from '@/components/account-icon';
+import { AccountProgress, useAccountsProgress } from '@/components/settings/account-progress';
+import { BusinessesSection } from './businesses';
 import { cn } from '@/lib/utils';
 
 export default function AccountsSettings() {
@@ -42,6 +45,7 @@ export default function AccountsSettings() {
     return () => clearTimeout(timer);
   }, [params, setParams]);
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: trpc.accounts.list.queryKey() });
+  const progress = useAccountsProgress();
   const resync = useMutation(trpc.accounts.resync.mutationOptions({ onSuccess: invalidate }));
   const remove = useMutation(trpc.accounts.remove.mutationOptions({ onSuccess: () => (invalidate(), void queryClient.invalidateQueries({ queryKey: trpc.mail.list.pathKey() })) }));
 
@@ -64,9 +68,14 @@ export default function AccountsSettings() {
             {catalog.accounts.map((a) => {
               const business = a.businessId ? catalog.businessById.get(a.businessId) : undefined;
               return (
-                <li key={a.id} id={`account-${a.id}`} className={cn('-mx-2 flex items-center gap-3 rounded-lg px-2 py-3 transition-colors duration-700', highlight === a.id && 'bg-primary/10')}>
+                <li key={a.id} id={`account-${a.id}`} className={cn('-mx-2 flex items-start gap-3 rounded-lg px-2 py-3 transition-colors duration-700', highlight === a.id && 'bg-primary/10')}>
                   <span className="relative">
-                    {brandForProvider(a.provider) ? (
+                    {a.icon ? (
+                      // The icon picked in the sidebar (an icon, a brand, the company's logo).
+                      <span className="bg-card ring-border flex size-9 items-center justify-center rounded-xl ring-1">
+                        <AccountIcon account={a} size={20} />
+                      </span>
+                    ) : brandForProvider(a.provider) ? (
                       <BrandLogo brand={brandForProvider(a.provider)} tile size={36} />
                     ) : (
                       <span className="flex size-9 items-center justify-center rounded-xl text-[13px] font-semibold text-white" style={{ backgroundColor: a.color }}>
@@ -79,7 +88,12 @@ export default function AccountsSettings() {
                     <p className="flex items-center gap-2 text-[13.5px] font-medium">
                       <span className="truncate">{a.label || a.email}</span>
                       {a.label ? <span className="text-muted-foreground truncate font-normal">{a.email}</span> : null}
-                      {business ? <BusinessBadge business={business} /> : null}
+                      {/* Same groups as the sidebar: its business, « Business » with none named, or « Personnel ». */}
+                      {business ? (
+                        <BusinessBadge business={business} />
+                      ) : a.kind ? (
+                        <span className="bg-muted text-muted-foreground rounded-full px-2 py-px text-[11px] font-normal">{a.kind === 'business' ? t('Business') : t('Personnel')}</span>
+                      ) : null}
                     </p>
                     <p className="text-muted-foreground flex items-center gap-1.5 text-[12px]">
                       {a.status === 'error' ? (
@@ -97,6 +111,7 @@ export default function AccountsSettings() {
                         </>
                       )}
                     </p>
+                    <AccountProgress progress={progress.find((p) => p.id === a.id)} />
                   </div>
                   <GhostButton onClick={() => setEditing({ id: a.id })} title={t('Modifier le nom et la connexion')}>
                     <Pencil className="size-3.5" />
@@ -122,6 +137,7 @@ export default function AccountsSettings() {
           </ul>
         )}
       </Card>
+      <BusinessesSection />
       <Card title={t('Comment ça marche')} description={t('Chaque compte garde une connexion IMAP IDLE ouverte : les nouveaux mails arrivent en temps réel, sont triés par l’IA, puis les règles s’appliquent. Vos actions (archiver, supprimer…) sont répercutées sur le serveur.')}>
         <p className="text-muted-foreground text-[12.5px]">
           {t('Gmail : activez la validation en deux étapes puis créez un mot de passe d’application. Les alias Gmail (« envoyer en tant que ») arrivent dans la même boîte et sont rattachés à leur business par adresse de destination.')}

@@ -7,6 +7,7 @@ import { BrandLogo, brandForProvider } from '@/components/brand-logo';
 import { useCatalog } from '@/hooks/use-catalog';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
 import { useTRPC, type Outputs } from '@/lib/trpc';
+import { useSpaces } from '@/hooks/use-space';
 import { formatListDate } from '@/lib/utils';
 import { t, tp } from '@/lib/i18n';
 
@@ -20,7 +21,8 @@ export default function Subscriptions() {
   const catalog = useCatalog();
   const { data: ui } = useQuery(trpc.settings.get.queryOptions());
   const queryClient = useQueryClient();
-  const { data, isPending } = useQuery(trpc.mail.subscriptions.queryOptions());
+  const { spaceId } = useSpaces();
+  const { data, isPending } = useQuery(trpc.mail.subscriptions.queryOptions({ spaceId }));
   const [running, setRunning] = useState<string | null>(null);
   const unsubscribe = useMutation(trpc.mail.unsubscribe.mutationOptions());
   const trashFromSender = useMutation(trpc.mail.trashFromSender.mutationOptions());
@@ -109,7 +111,7 @@ export default function Subscriptions() {
           {s.status === 'success' ? (
             s.kept > 0 ? (
               <button
-                onClick={() => void deleteAll([s])}
+                onClick={() => setAsk([s])}
                 disabled={running !== null}
                 title={tp(s.kept, 'Mettre son {n} mail à la corbeille', 'Mettre ses {n} mails à la corbeille')}
                 className="hover:bg-destructive/10 hover:text-destructive hover:border-destructive/30 flex h-7 items-center gap-1.5 rounded-lg border border-border px-2.5 text-[12.5px] disabled:opacity-50"
@@ -193,7 +195,7 @@ export default function Subscriptions() {
         )}
       </div>
       <Dialog open={ask !== null} onOpenChange={(open) => !open && setAsk(null)}>
-        <DialogContent showOverlay className="max-w-[420px]">
+        <DialogContent showOverlay className="max-w-[480px]">
           {ask ? (
             <>
               <DialogTitle className="text-[16px]">
@@ -204,18 +206,64 @@ export default function Subscriptions() {
               <DialogDescription className="text-[13px]">
                 {ask.length === 1 ? t('Vous êtes désinscrit. Ses anciens mails partent à la corbeille, vous pourrez encore les récupérer.') : t('Vous êtes désinscrit de ces listes. Leurs anciens mails partent à la corbeille, vous pourrez encore les récupérer.')}
               </DialogDescription>
-              <div className="mt-2 flex justify-end gap-2">
-                <button type="button" onClick={() => setAsk(null)} className="hover:bg-accent h-8 rounded-lg border border-border px-3 text-[13px]">
-                  {t('Garder')}
-                </button>
-                <button type="button" onClick={() => void deleteAll(ask)} className="bg-destructive text-destructive-foreground hover:bg-destructive/90 flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium">
-                  <Trash2 className="size-3.5" /> {t('Supprimer')}
-                </button>
-              </div>
+              <DeletePreview senders={ask} onDelete={() => void deleteAll(ask)} onKeep={() => setAsk(null)} />
             </>
           ) : null}
         </DialogContent>
       </Dialog>
     </div>
+  );
+}
+
+/**
+ * What will go to the trash, before it goes: one compact line per mail (subject, start of the
+ * text, date) in a short scrollable list, and the exact count on the button. No surprise.
+ */
+function DeletePreview({ senders, onDelete, onKeep }: { senders: Subscription[]; onDelete: () => void; onKeep: () => void }) {
+  const trpc = useTRPC();
+  const { data, isPending } = useQuery(trpc.mail.senderMails.queryOptions({ senders: senders.map((s) => ({ accountId: s.accountId, fromEmail: s.fromEmail })) }));
+  const total = data ? data.reduce((n, group) => n + group.mails.length, 0) : senders.reduce((n, s) => n + s.kept, 0);
+  return (
+    <>
+      <div className="border-border bg-muted/30 -mx-1 max-h-[240px] overflow-y-auto rounded-lg border" aria-label={t('Mails qui partent à la corbeille')}>
+        {isPending ? (
+          <div className="text-muted-foreground flex h-16 items-center justify-center">
+            <Loader2 className="size-4 animate-spin" />
+          </div>
+        ) : (
+          data?.map((group) => (
+            <div key={`${group.accountId}|${group.fromEmail}`}>
+              {senders.length > 1 ? (
+                <p className="bg-muted/80 text-muted-foreground sticky top-0 px-3 py-1 text-[11px] font-medium backdrop-blur">
+                  {senders.find((s) => s.fromEmail === group.fromEmail && s.accountId === group.accountId)?.fromName || group.fromEmail} · {group.mails.length}
+                </p>
+              ) : null}
+              {group.mails.map((mail) => (
+                <div key={mail.id} className="border-border/60 flex items-baseline gap-2 border-b px-3 py-1.5 text-[12px] last:border-0">
+                  <span className="min-w-0 flex-1 truncate">
+                    <span className="font-medium">{mail.subject || t('(sans objet)')}</span>
+                    {mail.snippet ? <span className="text-muted-foreground"> — {mail.snippet}</span> : null}
+                  </span>
+                  <span className="text-muted-foreground shrink-0 text-[11px] tabular-nums">{formatListDate(mail.date)}</span>
+                </div>
+              ))}
+            </div>
+          ))
+        )}
+      </div>
+      <div className="mt-1 flex justify-end gap-2">
+        <button type="button" onClick={onKeep} className="hover:bg-accent h-8 rounded-lg border border-border px-3 text-[13px]">
+          {t('Garder')}
+        </button>
+        <button
+          type="button"
+          onClick={onDelete}
+          disabled={isPending || total === 0}
+          className="bg-destructive text-destructive-foreground hover:bg-destructive/90 flex h-8 items-center gap-1.5 rounded-lg px-3 text-[13px] font-medium disabled:opacity-50"
+        >
+          <Trash2 className="size-3.5" /> {t('Supprimer ({n})', { n: total })}
+        </button>
+      </div>
+    </>
   );
 }

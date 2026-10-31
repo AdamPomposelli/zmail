@@ -9,6 +9,7 @@ import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@
 import { Switch } from '@/components/ui/switch';
 import { Card, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
 import { useCatalog } from '@/hooks/use-catalog';
+import { useSpaces } from '@/hooks/use-space';
 import { ACTION_LABELS, FIELD_LABELS, OP_LABELS, describeCondition, describeRuleAction } from '@/lib/rules';
 import { useTRPC, type Rule } from '@/lib/trpc';
 import { formatListDate } from '@/lib/utils';
@@ -49,7 +50,9 @@ export default function RulesSettings() {
   const { data: rules } = useQuery(trpc.rules.list.queryOptions());
   const { data: suggestions } = useQuery(trpc.rules.allSuggestions.queryOptions());
   const [draft, setDraft] = useState<Draft | null>(null);
-  const names = { tag: (id: string) => { const name = catalog.tagById.get(id)?.name; return name && t(name); }, business: (id: string) => catalog.businessById.get(id)?.name };
+  const { spaces } = useSpaces();
+  const folders = useFolderNames();
+  const names = { tag: (id: string) => { const name = catalog.tagById.get(id)?.name; return name && t(name); }, business: (id: string) => catalog.businessById.get(id)?.name, space: (id: string) => spaces.find((sp) => sp.id === id)?.name, folder: (id: string) => folders.get(id) };
   const invalidate = () => {
     void queryClient.invalidateQueries({ queryKey: trpc.rules.list.queryKey() });
     void queryClient.invalidateQueries({ queryKey: trpc.rules.allSuggestions.queryKey() });
@@ -283,7 +286,9 @@ function ConditionEditor({ condition, onChange, onRemove }: { condition: Conditi
 
 function ActionEditor({ action, onChange, onRemove }: { action: Action; onChange: (a: Action) => void; onRemove?: () => void }) {
   const catalog = useCatalog();
-  const needs = action.type === 'addTag' ? catalog.tags.map((tag) => [tag.id, t(tag.name)]) : action.type === 'setBusiness' ? catalog.businesses.map((b) => [b.id, b.name]) : action.type === 'setPriority' ? PRIORITIES : null;
+  const { spaces } = useSpaces();
+  const folders = useFolderNames();
+  const needs = action.type === 'moveToFolder' ? [...folders.entries()] : action.type === 'addTag' ? catalog.tags.map((tag) => [tag.id, t(tag.name)]) : action.type === 'setBusiness' ? catalog.businesses.map((b) => [b.id, b.name]) : action.type === 'setSpace' ? spaces.map((sp) => [sp.id, t(sp.name)]) : action.type === 'setPriority' ? PRIORITIES : null;
   return (
     <div className="flex items-center gap-2">
       <Select value={action.type} onValueChange={(type) => onChange({ type: type as Action['type'] })}>
@@ -320,5 +325,20 @@ function ActionEditor({ action, onChange, onRemove }: { action: Action; onChange
         </button>
       ) : null}
     </div>
+  );
+}
+
+/** Every account's folders, by id: « adam@shop.com › Receipts ». */
+function useFolderNames() {
+  const trpc = useTRPC();
+  const catalog = useCatalog();
+  const { data } = useQuery(trpc.accounts.folders.queryOptions());
+  return new Map(
+    (data ?? [])
+      .filter((f) => !['sent', 'drafts', 'all', 'trash'].includes(f.specialUse ?? ''))
+      .map((f) => {
+        const account = catalog.accountById.get(f.accountId);
+        return [f.id, `${account?.label || account?.email || ''} › ${f.path}`] as [string, string];
+      }),
   );
 }

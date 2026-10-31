@@ -38,13 +38,15 @@ export function useMailRoute() {
       threadId: search.get('thread'),
       /** One message of the open conversation to bring into view (picked in its reply tree). */
       messageId: search.get('msg'),
+      /** Opens the conversation with the composer ready (reply, forward… from the list's menu). */
+      compose: search.get('compose'),
       sort: (search.get('sort') === 'date' ? 'date' : 'smart') as 'smart' | 'date',
     }),
     [view, search],
   );
 
   const update = useCallback(
-    (patch: Partial<Record<'business' | 'tag' | 'account' | 'mailbox' | 'q' | 'thread' | 'msg' | 'sort', string | null>>, replace = false) => {
+    (patch: Partial<Record<'business' | 'tag' | 'account' | 'mailbox' | 'q' | 'thread' | 'msg' | 'compose' | 'sort', string | null>>, replace = false) => {
       setSearch(
         (prev) => {
           const next = new URLSearchParams(prev);

@@ -4,6 +4,8 @@ import { useTheme } from 'next-themes';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { cn } from '@/lib/utils';
 import { t } from '@/lib/i18n';
+import { FIND_EVENT } from './find-in-mail';
+import { trackGesture } from '@/lib/track';
 
 /** Rich newsletters keep their own light design; plain mails follow the app theme. */
 const isRich = (html: string) => /<table|bgcolor|background(-color)?\s*:|[^-]color\s*:/i.test(html);
@@ -15,7 +17,7 @@ const linkify = (text: string) =>
     .replace(/(https?:\/\/[^\s<]+)/g, '<a href="$1">$1</a>')
     .replace(/\n/g, '<br>');
 
-export function EmailBody({ messageId, html, text, allowImages, onBlockedImages }: { messageId: string; html: string; text: string; allowImages: boolean; onBlockedImages?: (blocked: boolean) => void }) {
+export function EmailBody({ messageId, threadId, html, text, allowImages, onBlockedImages }: { messageId: string; threadId?: string; html: string; text: string; allowImages: boolean; onBlockedImages?: (blocked: boolean) => void }) {
   const ref = useRef<HTMLIFrameElement>(null);
   const [height, setHeight] = useState(80);
   const { resolvedTheme } = useTheme();
@@ -69,8 +71,29 @@ export function EmailBody({ messageId, html, text, allowImages, onBlockedImages 
       const body = frame.contentDocument?.body;
       if (body) setHeight(Math.max(40, Math.ceil(body.scrollHeight) + 2));
     };
+    // The frame has its own keyboard: ⌘F clicked into a mail still opens the search in it.
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'f') {
+        e.preventDefault();
+        window.dispatchEvent(new Event(FIND_EVENT));
+      }
+    };
+    // A link opened from the mail (the domain only: where the user goes, not the full address).
+    const onClick = (e: MouseEvent) => {
+      const link = (e.target as Element | null)?.closest?.('a[href]');
+      if (!link || !threadId) return;
+      let domain: string | null = null;
+      try {
+        domain = new URL(link.getAttribute('href') ?? '').hostname || null;
+      } catch {
+        // mailto:, relative or broken links: still a click
+      }
+      trackGesture({ action: 'openLink', threadId, meta: { domain, message: messageId } });
+    };
     const onLoad = () => {
       measure();
+      frame.contentDocument?.addEventListener('keydown', onKey);
+      frame.contentDocument?.addEventListener('click', onClick);
       const body = frame.contentDocument?.body;
       if (body) {
         observer = new ResizeObserver(measure);
@@ -80,9 +103,11 @@ export function EmailBody({ messageId, html, text, allowImages, onBlockedImages 
     frame.addEventListener('load', onLoad);
     return () => {
       frame.removeEventListener('load', onLoad);
+      frame.contentDocument?.removeEventListener('keydown', onKey);
+      frame.contentDocument?.removeEventListener('click', onClick);
       observer?.disconnect();
     };
-  }, [doc]);
+  }, [doc, threadId, messageId]);
 
   return (
     <div className={cn(rich && 'overflow-hidden rounded-xl bg-white border border-border')}>

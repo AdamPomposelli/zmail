@@ -135,6 +135,50 @@ describe('live mail (IMAP IDLE) & notifications', () => {
   });
 });
 
+describe('folders and labels', () => {
+  it('syncs a folder whose mails are all older than the sync window (Gmail label « Comptabilité »)', async () => {
+    const email = 'adam.perso@gmail.test';
+    const client = await imapFor(email);
+    try {
+      await client.mailboxCreate('Comptabilite-Ancienne').catch(() => undefined);
+      const raw = ['From: Maxime Guerin <maxime@cabinet.test>', `To: ${email}`, 'Subject: Déclaration de TVA de mai', 'Message-ID: <tva-mai@cabinet.test>', 'Date: Tue, 03 Jun 2025 09:00:00 +0000', '', 'Votre déclaration est jointe.'].join('\r\n');
+      await client.append('Comptabilite-Ancienne', raw, ['\\Seen'], new Date('2025-06-03T09:00:00Z'));
+    } finally {
+      await client.logout();
+    }
+    const worker = engine.accounts.worker(accountIds[email]!);
+    await worker.sync({ refreshFolders: true });
+    const box = engine.db.get<{ id: string }>(`SELECT id FROM mailboxes WHERE account_id = ? AND path = 'Comptabilite-Ancienne'`, accountIds[email]!)!;
+    const items = engine.store.listThreads({ view: 'folder', mailboxId: box.id, limit: 20 }).items;
+    expect(items.map((i) => i.subject)).toContain('Déclaration de TVA de mai');
+  });
+
+  it('loads a folder’s older mails from the server, a page at a time', async () => {
+    const email = 'adam.perso@gmail.test';
+    const client = await imapFor(email);
+    try {
+      await client.mailboxCreate('Gros-Dossier').catch(() => undefined);
+      for (let n = 1; n <= 5; n++) {
+        const raw = [`From: Archive <archive@old.test>`, `To: ${email}`, `Subject: Ancien ${n}`, `Message-ID: <old-${n}@old.test>`, `Date: Mon, 0${n} Jan 2024 10:00:00 +0000`, '', 'Texte.'].join('\r\n');
+        await client.append('Gros-Dossier', raw, ['\\Seen'], new Date(`2024-01-0${n}T10:00:00Z`));
+      }
+    } finally {
+      await client.logout();
+    }
+    const worker = engine.accounts.worker(accountIds[email]!);
+    await worker.sync({ refreshFolders: true });
+    const box = engine.db.get<{ id: string }>(`SELECT id FROM mailboxes WHERE account_id = ? AND path = 'Gros-Dossier'`, accountIds[email]!)!;
+    // Pretend the sync kept only the latest two (as it keeps the latest 200 of a big folder).
+    engine.db.run(`DELETE FROM messages WHERE mailbox_id = ? AND subject IN ('Ancien 1', 'Ancien 2', 'Ancien 3')`, box.id);
+    const subjects = () => engine.store.listThreads({ view: 'folder', mailboxId: box.id, limit: 20 }).items.map((i) => i.subject).sort();
+    expect(subjects()).toEqual(['Ancien 4', 'Ancien 5']);
+    expect(await worker.loadOlder(box.id, 2)).toEqual({ fetched: 2, more: true });
+    expect(subjects()).toEqual(['Ancien 2', 'Ancien 3', 'Ancien 4', 'Ancien 5']);
+    expect(await worker.loadOlder(box.id, 2)).toEqual({ fetched: 1, more: false });
+    expect(subjects()).toEqual(['Ancien 1', 'Ancien 2', 'Ancien 3', 'Ancien 4', 'Ancien 5']);
+  });
+});
+
 describe('actions are mirrored on the IMAP server', () => {
   it('archives a thread into the Archive folder', async () => {
     const t = thread('Votre colis a été expédié')!;
@@ -154,6 +198,163 @@ describe('actions are mirrored on the IMAP server', () => {
       await client.logout();
     }
     expect(engine.store.listThreads({ view: 'archive', limit: 50 }).items.map((i) => i.subject)).toContain('Votre colis a été expédié');
+  });
+
+  it('files a conversation into one of the account’s folders (drag onto the sidebar)', async () => {
+    const email = 'adam.perso@gmail.test';
+    const client = await imapFor(email);
+    await client.mailboxCreate('Voyages').catch(() => undefined);
+    await client.logout();
+    const worker = engine.accounts.worker(accountIds[email]!);
+    await worker.sync({ refreshFolders: true });
+    const box = engine.db.get<{ id: string }>(`SELECT id FROM mailboxes WHERE account_id = ? AND path = 'Voyages'`, accountIds[email]!)!;
+    const t = engine.store.listThreads({ view: 'inbox', accountId: accountIds[email]!, limit: 50 }).items[0]!;
+    await engine.actions.moveToFolder([t.id], box.id);
+    expect(engine.store.listThreads({ view: 'inbox', limit: 200 }).items.find((i) => i.id === t.id)).toBeUndefined();
+    expect(engine.store.listThreads({ view: 'folder', mailboxId: box.id, limit: 20 }).items.map((i) => i.subject)).toContain(t.subject);
+    const check = await imapFor(email);
+    try {
+      const lock = await check.getMailboxLock('Voyages');
+      try {
+        const subjects: string[] = [];
+        for await (const m of check.fetch('1:*', { envelope: true })) subjects.push(m.envelope?.subject ?? '');
+        expect(subjects).toContain(t.subject);
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await check.logout();
+    }
+  });
+
+  it('moves a folder into another one on the server, keeping its mails, then back to the top', async () => {
+    const email = 'adam.perso@gmail.test';
+    // The IMAP test server outlives a run: names of this run only.
+    const run = Date.now().toString(36);
+    const [name, parentName] = [`Projets ${run}`, `Archives ${run}`];
+    const client = await imapFor(email);
+    await client.mailboxCreate(name);
+    await client.mailboxCreate(parentName);
+    const subject = `Devis classé ${run}`;
+    await client.append(name, `From: Claire <claire@client.test>\r\nTo: ${email}\r\nSubject: ${subject}\r\nMessage-ID: <${run}@zmail.test>\r\nDate: ${new Date().toUTCString()}\r\n\r\nCi-joint le devis.\r\n`);
+    await client.logout();
+    const worker = engine.accounts.worker(accountIds[email]!);
+    await worker.sync({ refreshFolders: true });
+    const box = (path: string) => engine.db.get<{ id: string; path: string }>(`SELECT id, path FROM mailboxes WHERE account_id = ? AND path = ?`, accountIds[email]!, path);
+    const folder = box(name)!;
+    const parent = box(parentName)!;
+    await worker.syncFolder(folder.id);
+    const t = engine.store.listThreads({ view: 'folder', mailboxId: folder.id, limit: 20 }).items.find((i) => i.subject === subject)!;
+    expect(t).toBeDefined();
+
+    const moved = await worker.moveFolder(folder.id, parent.id);
+    expect(moved.path).toMatch(new RegExp(`^${parentName}[./]${name}$`));
+    expect(box(name)).toBeUndefined();
+    // Same folder, same mails: only its path changed.
+    expect(box(moved.path)?.id).toBe(folder.id);
+    expect(engine.store.listThreads({ view: 'folder', mailboxId: folder.id, limit: 20 }).items.map((i) => i.id)).toContain(t.id);
+    const check = await imapFor(email);
+    try {
+      const paths = (await check.list()).map((m) => m.path);
+      expect(paths).toContain(moved.path);
+      expect(paths).not.toContain(name);
+    } finally {
+      await check.logout();
+    }
+
+    await expect(worker.moveFolder(parent.id, folder.id)).rejects.toThrow(/sous-dossiers/);
+    // Back to the top level. GreenMail answers OK to this RENAME without doing it (Dovecot,
+    // Gmail… do it): either way the folder and its mails stay consistent with the server.
+    const back = await worker.moveFolder(folder.id, null).catch((e: Error) => e);
+    if (back instanceof Error) {
+      expect(back.message).toMatch(/n’a pas déplacé/);
+      expect(box(moved.path)?.id).toBe(folder.id);
+    } else expect(box(name)?.id).toBe(folder.id);
+    expect(engine.store.listThreads({ view: 'folder', mailboxId: folder.id, limit: 20 }).items.map((i) => i.id)).toContain(t.id);
+
+    const cleanup = await imapFor(email);
+    for (const m of (await cleanup.list()).filter((x) => x.path.includes(run)).sort((x, y) => y.path.length - x.path.length)) await cleanup.mailboxDelete(m.path).catch(() => undefined);
+    await cleanup.logout();
+  });
+
+  it('creates, renames, marks read and deletes a folder on the server, its mails going to the Trash', async () => {
+    const email = 'adam.perso@gmail.test';
+    const run = Date.now().toString(36);
+    const worker = engine.accounts.worker(accountIds[email]!);
+    const box = (path: string) => engine.db.get<{ id: string; path: string }>(`SELECT id, path FROM mailboxes WHERE account_id = ? AND path = ?`, accountIds[email]!, path);
+    const serverPaths = async () => {
+      const c = await imapFor(email);
+      try {
+        return (await c.list()).map((m) => m.path);
+      } finally {
+        await c.logout();
+      }
+    };
+
+    const created = await worker.createFolder(null, `spam ${run}`);
+    expect(await serverPaths()).toContain(created.path);
+    await expect(worker.createFolder(null, `spam ${run}`)).rejects.toThrow(/existe déjà/);
+    const child = await worker.createFolder(created.id, 'Vieux');
+    expect(child.path).toMatch(new RegExp(`^spam ${run}[./]Vieux$`));
+    // An empty subfolder goes away on its own. (GreenMail can never delete a folder renamed while
+    // it had a subfolder: it drops the connection, where Dovecot or Gmail don't. Moving a folder
+    // with its subfolders is covered above.)
+    expect(await worker.deleteFolder(child.id)).toMatchObject({ deleted: 1, moved: 0 });
+    expect(await serverPaths()).not.toContain(child.path);
+
+    const renamed = await worker.renameFolder(created.id, `Indésirables ${run}`);
+    expect(renamed.path).toBe(`Indésirables ${run}`);
+    expect(box(renamed.path)?.id).toBe(created.id);
+    expect(await serverPaths()).not.toContain(created.path);
+
+    // A mail in it (it goes to the Trash with the folder).
+    const c = await imapFor(email);
+    await c.append(renamed.path, `From: Julie Martin <julie@amis.test>\r\nTo: ${email}\r\nSubject: Photos ${run}\r\nMessage-ID: <photos-${run}@zmail.test>\r\nDate: ${new Date().toUTCString()}\r\n\r\nLes photos du week-end sont en ligne.\r\n`);
+    // « Mark all read » is checked on « Voyages »: GreenMail cannot delete a folder whose mails
+    // were just flagged (it drops the connection; Dovecot and Gmail don't).
+    await c.mailboxCreate('Voyages').catch(() => undefined);
+    await c.append('Voyages', `From: Train <billets@train.test>\r\nTo: ${email}\r\nSubject: Billet ${run}\r\nMessage-ID: <billet-${run}@zmail.test>\r\nDate: ${new Date().toUTCString()}\r\n\r\nVotre billet.\r\n`);
+    await c.logout();
+    await worker.sync({ refreshFolders: true });
+    await worker.syncFolder(created.id);
+    const voyages = box('Voyages')!;
+    await worker.syncFolder(voyages.id);
+    const unread = (id: string) => engine.db.get<{ n: number }>('SELECT COUNT(*) AS n FROM messages WHERE mailbox_id = ? AND unread = 1', id)?.n;
+    expect(unread(voyages.id)).toBeGreaterThan(0);
+    await worker.markFolderRead(voyages.id);
+    expect(unread(voyages.id)).toBe(0);
+    const check = await imapFor(email);
+    try {
+      const lock = await check.getMailboxLock('Voyages');
+      try {
+        for await (const m of check.fetch('1:*', { flags: true })) expect(m.flags?.has('\\Seen')).toBe(true);
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await check.logout();
+    }
+
+    // System folders are not touched.
+    await expect(worker.deleteFolder(engine.db.get<{ id: string }>(`SELECT id FROM mailboxes WHERE account_id = ? AND special_use = 'inbox'`, accountIds[email]!)!.id)).rejects.toThrow(/système/);
+
+    expect(await worker.deleteFolder(created.id)).toMatchObject({ deleted: 1, moved: 1 });
+    expect((await serverPaths()).some((p) => p.includes(run))).toBe(false);
+    expect(box(renamed.path)).toBeUndefined();
+    // The mail is in the Trash, not lost.
+    const trash = await imapFor(email);
+    try {
+      const lock = await trash.getMailboxLock('Trash');
+      try {
+        const subjects: string[] = [];
+        for await (const m of trash.fetch('1:*', { envelope: true })) subjects.push(m.envelope?.subject ?? '');
+        expect(subjects).toContain(`Photos ${run}`);
+      } finally {
+        lock.release();
+      }
+    } finally {
+      await trash.logout();
+    }
   });
 
   it('marks as read on the server', async () => {

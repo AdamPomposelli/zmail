@@ -8,6 +8,7 @@
  */
 import { serve } from '@hono/node-server';
 import { rmSync } from 'node:fs';
+import { connect } from 'node:net';
 import { join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { EngineContext } from '../src/context';
@@ -25,7 +26,12 @@ const ACCOUNTS = english ? ACCOUNTS_EN : ACCOUNTS_FR;
 const BUSINESSES = english ? BUSINESSES_EN : BUSINESSES_FR;
 if (!keep) rmSync(dataDir, { recursive: true, force: true });
 
-await startUnsubscribeMock();
+// Another demo may already serve the mock unsubscribe pages on their fixed port: share them.
+const mockRunning = await new Promise<boolean>((done) => {
+  const probe = connect(47900, '127.0.0.1', () => (probe.end(), done(true)));
+  probe.on('error', () => done(false));
+});
+if (!mockRunning) await startUnsubscribeMock();
 // A sender the demo user keeps deleting: trashing these three shows the rule suggestion.
 const deals: FixtureMail[] = [1, 2, 3].map((n) => ({
   to: 'adam.perso@gmail.test',
@@ -48,6 +54,9 @@ const closing: FixtureMail[] = [
 ].map((m) => ({ ...m, to: 'adam@nordlys.studio', thread: 'tarifs-fermeture' }));
 if (!keep) await seedMailboxes(english ? MAILS_EN : [...MAILS, ...deals, ...closing]);
 const engine = await EngineContext.create(dataDir);
+// The demo mailbox shows every built-in category (parcels, leads, chargebacks…); a real new
+// install starts with the essential ones only.
+if (!keep) engine.db.run("UPDATE tags SET hidden = 0 WHERE kind = 'system'");
 if (english) engine.db.setSetting('locale', 'en');
 
 if (engine.accounts.list().length === 0) {
@@ -77,5 +86,6 @@ if (engine.accounts.list().length === 0) {
 engine.pipeline.backfill();
 
 const port = Number(process.env.ZMAIL_PORT ?? 47812);
+engine.port = port;
 const uiDir = process.env.ZMAIL_UI_DIR ? resolve(process.env.ZMAIL_UI_DIR) : undefined;
 serve({ fetch: createApp(engine, uiDir).fetch, port, hostname: '127.0.0.1' }, () => console.log(`demo engine on http://127.0.0.1:${port} (data: ${dataDir})`));

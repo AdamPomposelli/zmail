@@ -43,12 +43,16 @@ export type RetriageRun = {
   startedAt: number;
   finishedAt: number | null;
   cancelled: boolean;
+  /** No AI model could sort: only ZMail's local rules re-read the mails they had sorted. */
+  localOnly: boolean;
 };
 
 export class TriagePipeline {
   private queue: { id: string; force: boolean }[] = [];
   private batch: { run: RetriageRun; ids: Set<string> } | null = null;
   private queued = new Set<string>();
+  private urgent = new Set<string>();
+  private finished: number[] = [];
   private running = 0;
   private idleWaiters: (() => void)[] = [];
   concurrency = 2;
@@ -56,35 +60,57 @@ export class TriagePipeline {
   constructor(private readonly ctx: EngineContext) {}
 
   enqueue(ids: string[], force = false) {
-    for (const id of ids) {
-      if (this.queued.has(id)) continue;
-      this.queued.add(id);
-      this.queue.push({ id, force });
-    }
+    const fresh = ids.filter((id) => !this.queued.has(id));
+    if (!fresh.length) return;
+    // A mail that just arrived (a code, a reply) goes before any backlog: importing a whole
+    // mailbox must never delay its notification. The rest is read newest first.
+    const rows = this.ctx.db.all<{ id: string; date: number; is_new: number }>(`SELECT id, date, is_new FROM messages WHERE id IN (SELECT value FROM json_each(?))`, JSON.stringify(fresh));
+    const date = new Map(rows.map((r) => [r.id, r.date]));
+    const urgent = new Set(rows.filter((r) => r.is_new === 1 || r.date > Date.now() - 6 * 3600_000).map((r) => r.id));
+    const jobs = [...fresh].sort((a, b) => (date.get(b) ?? 0) - (date.get(a) ?? 0)).map((id) => ({ id, force }));
+    for (const id of fresh) this.queued.add(id);
+    const firstBacklog = this.queue.findIndex((job) => !this.urgent.has(job.id));
+    const head = jobs.filter((job) => urgent.has(job.id));
+    head.forEach((job) => this.urgent.add(job.id));
+    this.queue.splice(firstBacklog === -1 ? this.queue.length : firstBacklog, 0, ...head);
+    this.queue.push(...jobs.filter((job) => !urgent.has(job.id)));
     this.pump();
+  }
+
+  /** Mails read per second lately, for time estimates. */
+  rate() {
+    const recent = this.finished.filter((at) => Date.now() - at < 120_000);
+    if (recent.length < 3) return null;
+    return recent.length / Math.max((Date.now() - recent[0]!) / 1000, 1);
   }
 
   /**
    * Re-reads every mail the AI sorted (the user's own corrections are kept) with the current
    * mode, categories and rules: inbox first, newest first, so the visible part changes first.
    */
-  retriageAll(): RetriageRun {
+  async retriageAll(): Promise<RetriageRun> {
     if (this.batch && !this.batch.run.finishedAt) return this.batch.run;
+    // With no model to sort (e.g. the free model became paid), re-reading everything would replace
+    // the AI's sorting with the local engine's: only what the local engine sorted is redone.
+    const plan = await this.ctx.ai.plan('triage');
+    const localOnly = plan.candidates.length === 0 && !plan.consensus;
     const ids = this.ctx.db
       .all<{ message_id: string }>(
         `SELECT t.message_id FROM triage t JOIN messages m ON m.id = t.message_id JOIN mailboxes mb ON mb.id = m.mailbox_id
-         WHERE t.user_override = 0 AND mb.special_use NOT IN ('sent', 'drafts')
+         WHERE t.user_override = 0 AND COALESCE(mb.special_use, '') NOT IN ('sent', 'drafts') ${localOnly ? "AND t.engine = 'heuristic'" : ''}
          ORDER BY CASE mb.special_use WHEN 'inbox' THEN 0 ELSE 1 END, m.date DESC`,
       )
       .map((r) => r.message_id);
-    const run: RetriageRun = { total: ids.length, done: 0, changed: 0, startedAt: Date.now(), finishedAt: ids.length ? null : Date.now(), cancelled: false };
+    const run: RetriageRun = { total: ids.length, done: 0, changed: 0, startedAt: Date.now(), finishedAt: ids.length ? null : Date.now(), cancelled: false, localOnly };
     this.batch = { run, ids: new Set(ids) };
+    if (run.finishedAt) this.ctx.db.setSetting('retriage:last', run);
     this.enqueue(ids, true);
     return run;
   }
 
+  /** The run in progress, or the last one (kept across restarts, so the settings can say when). */
   retriageStatus(): RetriageRun | null {
-    return this.batch?.run ?? null;
+    return this.batch?.run ?? this.ctx.db.getSetting<RetriageRun | null>('retriage:last', null);
   }
 
   /** Stops a run: what is done stays done, the rest keeps its previous sorting. */
@@ -99,8 +125,14 @@ export class TriagePipeline {
     });
     batch.run.cancelled = true;
     // Only the mails being read right now are left; it ends with them.
-    if (batch.ids.size === 0) batch.run.finishedAt = Date.now();
+    if (batch.ids.size === 0) this.finishBatch();
     return batch.run;
+  }
+
+  private finishBatch() {
+    if (!this.batch) return;
+    this.batch.run.finishedAt = Date.now();
+    this.ctx.db.setSetting('retriage:last', this.batch.run);
   }
 
   private batchProgress(id: string, changed: boolean) {
@@ -109,7 +141,7 @@ export class TriagePipeline {
     batch.ids.delete(id);
     batch.run.done++;
     if (changed) batch.run.changed++;
-    if (batch.ids.size === 0) batch.run.finishedAt = Date.now();
+    if (batch.ids.size === 0) this.finishBatch();
   }
 
   /** Resolves once the queue is drained (used by tests and the seed script). */
@@ -129,6 +161,9 @@ export class TriagePipeline {
           this.batchProgress(job.id, changed);
           this.running--;
           this.queued.delete(job.id);
+          this.urgent.delete(job.id);
+          this.finished.push(Date.now());
+          if (this.finished.length > 60) this.finished.shift();
           if (this.running === 0 && this.queue.length === 0) {
             bus.emitEvent({ type: 'mail', reason: 'triaged', threadIds: [] });
             void this.ctx.refreshBadge();
@@ -192,18 +227,20 @@ export class TriagePipeline {
       deliveredTo: row.delivered_to,
     });
 
-    const model = await this.askModel(row, features, heuristic, businessId);
+    // Only the categories of the space the mail lands in (and the shared ones).
+    const spaceTags = this.ctx.catalog.tagsForSpace(this.ctx.spaces.spaceFor({ threadId: row.thread_id, businessId, accountId: row.account_id }));
+    const model = await this.askModel(row, features, heuristic, businessId, spaceTags);
     const merged = mergeTriage({
       heuristic,
       model: model?.data ?? null,
       text: `${row.subject}\n${row.text_body}`,
-      knownTags: new Set(this.ctx.catalog.tags().map((t) => t.id)),
+      knownTags: new Set(spaceTags.map((t) => t.id)),
       customTags: model ? [] : this.ctx.catalog.matchCustomTags(`${row.subject}\n${row.from_email}\n${row.text_body.slice(0, 3000)}`),
       folder: row.special_use,
     });
 
     // A category the user removed never comes back through a floor or a heuristic.
-    const visible = new Set(this.ctx.catalog.tags().map((t) => t.id));
+    const visible = new Set(spaceTags.map((t) => t.id));
     merged.tags = merged.tags.filter((id) => visible.has(id));
 
     return {
@@ -217,12 +254,12 @@ export class TriagePipeline {
     };
   }
 
-  private async askModel(row: Located, features: MailFeatures, heuristic: HeuristicResult, businessId: string | null) {
+  private async askModel(row: Located, features: MailFeatures, heuristic: HeuristicResult, businessId: string | null, tags = this.ctx.catalog.tags()) {
     const businesses = this.ctx.catalog.businesses();
     const request = buildTriageRequest({
       features,
       bulk: heuristic.bulk,
-      tags: this.ctx.catalog.tags(),
+      tags,
       business: businessId ? businesses.find((b) => b.id === businessId) : undefined,
       businesses,
     }, this.ctx.prompts.get());
@@ -252,6 +289,9 @@ export class TriagePipeline {
           if (action.type === 'trash') await this.ctx.actions.trash([row.thread_id], 'rule');
           if (action.type === 'markRead') await this.ctx.actions.markRead([row.thread_id], true, 'rule');
           if (action.type === 'star') await this.ctx.actions.star([row.thread_id], true, 'rule');
+          if (action.type === 'setSpace' && action.value) this.ctx.spaces.move([row.thread_id], action.value, 'rule');
+          // A folder of the same account (the rule says which account; another account's mail stays).
+          if (action.type === 'moveToFolder' && action.value) await this.ctx.actions.moveToFolder([row.thread_id], action.value, 'rule');
           if (action.type === 'unsubscribe') {
             const done = this.ctx.db.get(`SELECT 1 FROM unsubscribes WHERE from_email = ? AND status IN ('success', 'pending')`, row.from_email);
             // This mail may lack the header; any earlier mail of the same sender carrying one will do.

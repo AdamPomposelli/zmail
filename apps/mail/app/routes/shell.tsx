@@ -5,6 +5,7 @@ import { useHotkeys } from 'react-hotkeys-hook';
 import { AppSidebar } from '@/components/app-sidebar';
 import { AgentPanel, type AgentRequest } from '@/components/agent/agent-panel';
 import { CommandPalette } from '@/components/command-palette';
+import type { Mention } from '@/components/smart/mentions';
 import { ComposeDialog } from '@/components/mail/compose-dialog';
 import { Onboarding } from '@/components/onboarding';
 import { SuggestionModal } from '@/components/suggestion-modal';
@@ -53,7 +54,9 @@ export default function Shell() {
   useEffect(() => {
     const onAsk = (e: Event) => {
       setAgent(true);
-      setAgentRequest({ kind: 'ask', text: (e as CustomEvent<string>).detail, at: Date.now() });
+      // A question (string), or one asked from ⌘K with its @mentions.
+      const detail = (e as CustomEvent<string | { text: string; mentions?: Mention[] }>).detail;
+      setAgentRequest(typeof detail === 'string' ? { kind: 'ask', text: detail, at: Date.now() } : { kind: 'ask', text: detail.text, mentions: detail.mentions, at: Date.now() });
     };
     const onCleanup = () => {
       setAgent(true);

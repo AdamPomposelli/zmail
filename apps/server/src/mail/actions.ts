@@ -11,6 +11,7 @@ import { log } from '../lib/log';
 import { t } from '../lib/i18n';
 
 type Located = MessageRow & { special_use: string | null; path: string };
+type MailboxTarget = Parameters<ReturnType<EngineContext['accounts']['worker']>['move']>[1];
 
 /** Who asked: user actions are learned from, rule and agent actions are not. */
 export type ActionSource = 'user' | 'rule' | 'agent';
@@ -53,7 +54,7 @@ export class MailActions {
     return (incoming.length ? incoming : all).at(-1);
   }
 
-  private learn(action: UserAction, threadIds: string[], source: ActionSource, meta: Record<string, unknown> = {}) {
+  private learn(action: UserAction, threadIds: string[], source: ActionSource, meta: Record<string, unknown> = {}, extra: { dwellMs?: number } = {}) {
     if (source !== 'user') return;
     for (const threadId of threadIds) {
       const msg = this.representative(threadId);
@@ -71,8 +72,19 @@ export class MailActions {
         newsletter: triage?.newsletter ?? false,
         subject: msg.subject,
         meta,
+        batch: threadIds.length,
+        dwellMs: extra.dwellMs,
       });
     }
+  }
+
+  /**
+   * What the app sees and the engine cannot: how long a conversation was read and how far down,
+   * a link opened, an attachment downloaded, a code copied, a search typed. Learned from like the rest.
+   */
+  track(input: { action: 'view' | 'openLink' | 'downloadAttachment' | 'copyOtp' | 'search'; threadId?: string | null; ms?: number; meta?: Record<string, unknown> }) {
+    if (input.threadId) return this.learn(input.action, [input.threadId], 'user', input.meta ?? {}, { dwellMs: input.ms });
+    this.ctx.patterns.log({ action: input.action, meta: input.meta ?? {} });
   }
 
   private changed(threadIds: string[]) {
@@ -85,8 +97,29 @@ export class MailActions {
     for (const [accountId, items] of byAccount) {
       const worker = this.ctx.accounts.worker(accountId);
       const target = await worker.ensureMailbox(special, FOLDER_NAMES[special]);
-      const toMove = items.filter((m) => m.mailbox_id !== target.id);
-      if (toMove.length === 0) continue;
+      await this.moveInto(accountId, items, target);
+    }
+  }
+
+  /**
+   * Files conversations into one of the account's folders or labels (a mail dragged onto a folder
+   * of the sidebar). The copies the user sees move: inbox, spam and the user's own folders; Gmail's
+   * All Mail, Sent and Drafts copies stay where they are.
+   */
+  async moveToFolder(threadIds: string[], mailboxId: string, source: ActionSource = 'user') {
+    const target = this.ctx.db.get<{ id: string; account_id: string; path: string; special_use: string | null }>('SELECT * FROM mailboxes WHERE id = ?', mailboxId);
+    if (!target) throw new Error(t('Dossier introuvable'));
+    this.learn('moveToFolder', threadIds, source, { mailboxId, folder: target.path, accountId: target.account_id });
+    const messages = this.messages(threadIds, (m) => m.account_id === target.account_id && m.mailbox_id !== target.id && !['all', 'sent', 'drafts', 'trash'].includes(m.special_use ?? ''));
+    await this.moveInto(target.account_id, messages, target as unknown as MailboxTarget);
+    this.changed(threadIds);
+  }
+
+  private async moveInto(accountId: string, items: Located[], target: MailboxTarget) {
+    const worker = this.ctx.accounts.worker(accountId);
+    const toMove = items.filter((m) => m.mailbox_id !== target.id);
+    if (toMove.length === 0) return;
+    {
       this.ctx.db.tx(() => {
         for (const m of toMove) this.ctx.db.run('UPDATE messages SET mailbox_id = ?, uid = ? WHERE id = ?', target.id, -m.uid, m.id);
       });
@@ -156,6 +189,7 @@ export class MailActions {
   async archiveMessage(id: string) {
     const msg = this.ctx.store.message(id);
     if (!msg) return;
+    this.learn('archive', [msg.thread_id], 'user', { message: id });
     await this.moveTo([msg as unknown as Located].filter((m) => m.special_use === 'inbox'), 'archive');
     this.changed([msg.thread_id]);
   }
@@ -163,6 +197,7 @@ export class MailActions {
   async trashMessage(id: string) {
     const msg = this.ctx.store.message(id);
     if (!msg) return;
+    this.learn('trash', [msg.thread_id], 'user', { message: id });
     // Gmail keeps a copy per label: every copy of this mail goes, not the rest of the conversation.
     const copies = this.messages([msg.thread_id], (m) => (m.message_id ? m.message_id === msg.message_id : m.id === id) && m.special_use !== 'trash');
     await this.moveTo(copies, 'trash');
@@ -193,6 +228,7 @@ export class MailActions {
   }
 
   async deleteForever(threadIds: string[]) {
+    this.learn('deleteForever', threadIds, 'user');
     const msgs = this.messages(threadIds, (m) => m.special_use === 'trash' || m.special_use === 'junk');
     for (const [accountId, items] of Map.groupBy(msgs.filter((m) => m.uid > 0), (m) => m.account_id)) {
       await this.ctx.accounts.worker(accountId).expunge(items.map((m) => ({ mailboxId: m.mailbox_id, uid: m.uid })));
@@ -243,6 +279,13 @@ export class MailActions {
     this.changed(threadIds);
   }
 
+  /** « Déplacer vers l’espace » : learned from, so a repeated move becomes a rule suggestion. */
+  moveToSpace(threadIds: string[], spaceId: string, source: ActionSource = 'user') {
+    const space = this.ctx.spaces.get(spaceId);
+    this.learn('moveToSpace', threadIds, source, { spaceId, spaceName: space?.name ?? spaceId });
+    this.ctx.spaces.move(threadIds, spaceId, source);
+  }
+
   setBusiness(threadIds: string[], businessId: string | null, source: ActionSource = 'user') {
     this.learn('setBusiness', threadIds, source, { businessId });
     const before = this.snapshot(threadIds);
@@ -288,14 +331,16 @@ export class MailActions {
       attachments: mail.attachments?.map((a) => ({ filename: a.filename, contentType: a.contentType, content: Buffer.from(a.base64, 'base64') })),
     };
     const raw = await new MailComposer(message).compile().build();
-    await smtpTransport(account, this.ctx.secrets.decrypt(account.secret)).sendMail({ envelope: { from: fromAddress, to: [...mail.to, ...(mail.cc ?? []), ...(mail.bcc ?? [])] }, raw });
+    await smtpTransport(account, await this.ctx.oauth.resolve(this.ctx.secrets.decrypt(account.secret), account.id)).sendMail({ envelope: { from: fromAddress, to: [...mail.to, ...(mail.cc ?? []), ...(mail.bcc ?? [])] }, raw });
 
     // Gmail files sent mail itself; other servers need the copy appended to Sent.
     const worker = this.ctx.accounts.worker(account.id);
     if (!['gmail', 'google-workspace'].includes(account.provider)) {
       await worker.append('sent', raw, ['\\Seen']).catch((error) => log.warn('send', 'append to Sent failed', (error as Error).message));
     }
-    if (parent && source === 'user') this.learn('reply', [parent.thread_id], source);
+    if (parent && source === 'user') this.learn('reply', [parent.thread_id], source, { to: mail.to.length + (mail.cc?.length ?? 0) });
+    // A new mail (no conversation yet): who the user writes to says who matters.
+    else if (source === 'user') this.ctx.patterns.log({ action: 'send', accountId: account.id, subject: mail.subject, meta: { to: [...mail.to, ...(mail.cc ?? [])].map((a) => a.toLowerCase()) } });
     void worker.sync({ only: ['sent'] }).catch(() => undefined);
     return { ok: true };
   }

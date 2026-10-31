@@ -20,10 +20,15 @@ export class FakeBridge extends NativeBridge {
   }
 }
 
-export async function createTestEngine() {
+/**
+ * A fresh engine. Sorting tests need every built-in category, so they are all turned on unless
+ * `sober` asks for what a new install really starts with.
+ */
+export async function createTestEngine({ sober = false } = {}) {
   const dir = mkdtempSync(join(tmpdir(), 'zmail-test-'));
   const bridge = new FakeBridge();
   const engine = await EngineContext.create(dir, { bridge, secrets: Secrets.forTests() });
+  if (!sober) engine.db.run("UPDATE tags SET hidden = 0 WHERE kind = 'system'");
   return { engine, bridge, dir };
 }
 

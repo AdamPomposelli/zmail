@@ -13,10 +13,11 @@ import { cn, displayName, formatListDate } from '@/lib/utils';
 import { BrandLogo, brandForModel } from '@/components/brand-logo';
 import { FreeBadge } from '@/components/ui/free-badge';
 import { CleanupView } from './cleanup-view';
+import { MentionChip, MentionIcon, dropTrigger, mentionContext, mentionKey, mentionLabel, parseTrigger, useMentionSuggestions, type Mention } from '@/components/smart/mentions';
 import { t } from '@/lib/i18n';
 
 type Reply = Outputs['ai']['chat'];
-type Turn = { role: 'user'; content: string } | { role: 'assistant'; content: string; reply?: Reply };
+type Turn = { role: 'user'; content: string; mentions?: Mention[] } | { role: 'assistant'; content: string; reply?: Reply };
 
 const EXAMPLES = [
   t('Quels sont mes mails importants ?'),
@@ -31,7 +32,7 @@ const STORAGE_KEY = 'zmail.agent.tabs';
 type Tab = { id: string; title: string; kind: 'chat' | 'cleanup'; turns: Turn[]; runId?: string | null; unread?: boolean };
 
 /** What another screen asks the chat to open: a question, a new cleaning run, or an existing one. */
-export type AgentRequest = { kind: 'ask'; text: string; at: number } | { kind: 'cleanup'; at: number } | { kind: 'run'; runId: string; at: number };
+export type AgentRequest = { kind: 'ask'; text: string; mentions?: Mention[]; at: number } | { kind: 'cleanup'; at: number } | { kind: 'run'; runId: string; at: number };
 
 const newTab = (kind: Tab['kind'] = 'chat', extra: Partial<Tab> = {}): Tab => ({ id: `${Date.now().toString(36)}${Math.random().toString(36).slice(2, 6)}`, title: kind === 'cleanup' ? t('Tri IA') : t('Nouvelle discussion'), kind, turns: [], ...extra });
 
@@ -70,6 +71,17 @@ export function AgentPanel({ onClose, request }: { onClose: () => void; request?
       return { tabs: rest, active: prev.active === id ? rest[Math.max(0, index - 1)]!.id : prev.active };
     });
   const [input, setInput] = useState('');
+  // @mail, @sender, @account and #category picked in the input, sent as context with the question.
+  const [chips, setChips] = useState<Mention[]>([]);
+  const [pickIndex, setPickIndex] = useState(0);
+  const suggestions = useMentionSuggestions(input, { exclude: chips });
+  const picking = parseTrigger(input).trigger !== null && suggestions.length > 0;
+  const track = useMutation(trpc.cleanup.trackShortcut.mutationOptions());
+  const pick = (m: Mention) => {
+    setChips((prev) => (prev.some((c) => mentionKey(c) === mentionKey(m)) ? prev : [...prev, m]));
+    setInput((v) => dropTrigger(v) + (dropTrigger(v) ? ' ' : ''));
+    setPickIndex(0);
+  };
   const bottom = useRef<HTMLDivElement>(null);
   const chat = useMutation(trpc.ai.chat.mutationOptions());
 
@@ -80,7 +92,11 @@ export function AgentPanel({ onClose, request }: { onClose: () => void; request?
       // private mode: tabs are not kept
     }
   }, [state]);
-  useEffect(() => bottom.current?.scrollIntoView({ behavior: 'smooth' }), [turns.length, state.active]);
+  // Braces: a smooth scrollIntoView returns a Promise in recent engines, which React would take
+  // for the effect's cleanup and crash on.
+  useEffect(() => {
+    bottom.current?.scrollIntoView({ behavior: 'smooth' });
+  }, [turns.length, state.active]);
 
   // Requests from elsewhere, handled once: a question (asked in a new tab when the current one is
   // busy), a new cleaning run, or the run a notification points to.
@@ -89,11 +105,11 @@ export function AgentPanel({ onClose, request }: { onClose: () => void; request?
     if (!request || handled.current === request.at) return;
     handled.current = request.at;
     if (request.kind === 'ask') {
-      if (tab.kind === 'chat' && !tab.turns.length) void send(request.text);
+      if (tab.kind === 'chat' && !tab.turns.length) void send(request.text, tab.id, turns, request.mentions);
       else {
         const next = newTab('chat');
         openTab(next);
-        void send(request.text, next.id, []);
+        void send(request.text, next.id, [], request.mentions);
       }
     } else if (request.kind === 'cleanup') openTab(newTab('cleanup', { runId: null }));
     else {
@@ -104,16 +120,19 @@ export function AgentPanel({ onClose, request }: { onClose: () => void; request?
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [request]);
 
-  const send = async (message: string, tabId = tab.id, previous = turns) => {
+  const send = async (message: string, tabId = tab.id, previous = turns, mentions: Mention[] = chips) => {
     const text = message.trim();
     if (!text || chat.isPending) return;
     setInput('');
+    setChips([]);
     const history = previous.map((t) => ({ role: t.role, content: t.content }));
-    setTurns((prev) => [...prev, { role: 'user', content: text }], tabId);
+    setTurns((prev) => [...prev, { role: 'user', content: text, ...(mentions.length ? { mentions } : {}) }], tabId);
+    // A question about precise mails or categories spared finding them first: it counts as time saved.
+    if (mentions.length) track.mutate();
     // The first question names the tab.
     if (!previous.length) patchTab(tabId, (t) => (t.kind === 'chat' ? { title: text.length > 28 ? `${text.slice(0, 26)}…` : text } : {}));
     try {
-      const reply = await chat.mutateAsync({ message: text, history });
+      const reply = await chat.mutateAsync({ message: text, history, ...(mentions.length ? { context: mentionContext(mentions) } : {}) });
       setTurns((prev) => [...prev, { role: 'assistant', content: reply.reply || reply.steps.map((s) => s.summary).join('\n'), reply }], tabId);
       if (reply.steps.some((s) => s.ok && s.tool !== 'search_mail' && s.tool !== 'list_important' && s.tool !== 'summarize_inbox')) {
         void queryClient.invalidateQueries({ queryKey: trpc.rules.list.queryKey() });
@@ -126,7 +145,7 @@ export function AgentPanel({ onClose, request }: { onClose: () => void; request?
   };
 
   const chatModel = status?.capabilities.find((c) => c.id === 'chat')?.active;
-  const engine = chatModel?.name.replace(/^[^:]{2,20}:\s*/, '') ?? t('Moteur local');
+  const engine = chatModel?.name.replace(/^[^:]{2,20}:\s*/, '') ?? t('Règles ZMail, sans IA');
 
   return (
     <div className="flex h-full w-[380px] shrink-0 flex-col">
@@ -215,7 +234,14 @@ export function AgentPanel({ onClose, request }: { onClose: () => void; request?
           <div className="space-y-4">
             {turns.map((turn, i) =>
               turn.role === 'user' ? (
-                <div key={i} className="flex justify-end">
+                <div key={i} className="flex flex-col items-end gap-1">
+                  {turn.mentions?.length ? (
+                    <div className="flex max-w-[85%] flex-wrap justify-end gap-1">
+                      {turn.mentions.map((m) => (
+                        <MentionChip key={mentionKey(m)} mention={m} />
+                      ))}
+                    </div>
+                  ) : null}
                   <p className="bg-primary text-primary-foreground max-w-[85%] rounded-xl rounded-br-sm px-3.5 py-2 text-[13.5px]">{turn.content}</p>
                 </div>
               ) : (
@@ -274,18 +300,62 @@ export function AgentPanel({ onClose, request }: { onClose: () => void; request?
           void send(input);
         }}
       >
+        {picking ? (
+          <div className="border-border bg-popover mb-1.5 overflow-hidden rounded-xl border p-1 shadow-lg" role="listbox" aria-label={t('Mentionner')}>
+            {suggestions.map((m, i) => (
+              <button
+                key={mentionKey(m)}
+                type="button"
+                role="option"
+                aria-selected={i === pickIndex}
+                onMouseDown={(e) => (e.preventDefault(), pick(m))}
+                onMouseEnter={() => setPickIndex(i)}
+                className={cn('flex h-8 w-full items-center gap-2 rounded-md px-2 text-left text-[12.5px]', i === pickIndex ? 'bg-accent text-accent-foreground' : '')}
+              >
+                <MentionIcon mention={m} />
+                <span className="min-w-0 flex-1 truncate">{mentionLabel(m)}</span>
+                <span className="text-muted-foreground shrink-0 text-[11px]">{m.type === 'thread' ? t('Mail') : m.type === 'tag' ? t('Catégorie') : m.type === 'account' ? t('Compte') : t('Expéditeur')}</span>
+              </button>
+            ))}
+          </div>
+        ) : null}
+        {chips.length ? (
+          <div className="mb-1.5 flex flex-wrap gap-1">
+            {chips.map((c) => (
+              <MentionChip key={mentionKey(c)} mention={c} onRemove={() => setChips((prev) => prev.filter((x) => mentionKey(x) !== mentionKey(c)))} />
+            ))}
+          </div>
+        ) : null}
         <div className="bg-muted ring-ring/50 flex items-end gap-2 rounded-xl p-2 focus-within:ring-1">
           <textarea
             value={input}
-            onChange={(e) => setInput(e.target.value)}
+            onChange={(e) => (setInput(e.target.value), setPickIndex(0))}
             onKeyDown={(e) => {
+              if (picking) {
+                if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setPickIndex((i) => (i + (e.key === 'ArrowDown' ? 1 : suggestions.length - 1)) % suggestions.length);
+                  return;
+                }
+                if (e.key === 'Tab' || e.key === 'Enter') {
+                  e.preventDefault();
+                  pick(suggestions[Math.min(pickIndex, suggestions.length - 1)]!);
+                  return;
+                }
+                if (e.key === 'Escape') {
+                  e.preventDefault();
+                  setInput((v) => dropTrigger(v));
+                  return;
+                }
+              }
+              if (e.key === 'Backspace' && !input && chips.length) setChips((prev) => prev.slice(0, -1));
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 void send(input);
               }
             }}
             rows={1}
-            placeholder={t('Posez votre question à l’IA…')}
+            placeholder={t('Posez votre question… @ pour un mail, # pour une catégorie')}
             className="placeholder:text-muted-foreground max-h-32 min-h-[36px] flex-1 resize-none bg-transparent px-2 py-2 text-[13.5px] outline-none"
           />
           <button type="submit" disabled={!input.trim() || chat.isPending} className="bg-primary text-primary-foreground hover:bg-primary/90 flex size-8 shrink-0 items-center justify-center rounded-lg transition disabled:opacity-30">

@@ -13,7 +13,7 @@ export const ConditionSchema = z.object({
 });
 
 export const ActionSchema = z.object({
-  type: z.enum(['archive', 'trash', 'markRead', 'star', 'spam', 'addTag', 'setPriority', 'setBusiness', 'notify', 'unsubscribe']),
+  type: z.enum(['archive', 'trash', 'markRead', 'star', 'spam', 'addTag', 'setPriority', 'setBusiness', 'setSpace', 'moveToFolder', 'notify', 'unsubscribe']),
   value: z.string().optional(),
 });
 
@@ -186,6 +186,8 @@ const actionLabels = (): Record<RuleAction['type'], string> => ({
   addTag: t('ajouter le tag'),
   setPriority: t('définir la priorité'),
   setBusiness: t('rattacher au business'),
+  setSpace: t('ranger dans l’espace'),
+  moveToFolder: t('ranger dans le dossier'),
   notify: t('m’envoyer une notification'),
   unsubscribe: t('me désinscrire'),
 });

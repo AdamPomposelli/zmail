@@ -37,6 +37,7 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
 import { BrandLogo, brandForProvider } from '@/components/brand-logo';
 import { InfoHint } from '@/components/ui/info-hint';
 import { useSuggestBusinessPack } from '@/components/category-packs';
+import { MicrosoftSignIn } from './microsoft-signin';
 import { ZMailLogo } from '@/components/zmail-logo';
 import { useTRPC, type Outputs } from '@/lib/trpc';
 import { useCatalog } from '@/hooks/use-catalog';
@@ -98,9 +99,9 @@ const PROVIDERS: { id: string; name: string; hint: string; icon: LucideIcon; bra
 const USAGE_STEP = { id: 'usage' as const, label: t('Usage'), icon: Layers };
 
 const USAGES = [
-  { id: 'personal' as const, icon: User, title: t('Usage personnel'), hint: t('Famille et amis, administratif, voyages, achats') },
-  { id: 'business' as const, icon: Briefcase, title: t('Usage professionnel'), hint: t('Clients et opportunités, litiges de paiement, réunions') },
-  { id: 'both' as const, icon: Layers, title: t('Les deux'), hint: t('Toutes les catégories, perso et pro') },
+  { id: 'personal' as const, icon: User, title: t('Usage personnel'), hint: t('Les essentielles, plus Administratif') },
+  { id: 'business' as const, icon: Briefcase, title: t('Usage professionnel'), hint: t('Les essentielles, plus Réunions') },
+  { id: 'both' as const, icon: Layers, title: t('Les deux'), hint: t('Les essentielles, plus Administratif et Réunions') },
 ];
 
 const STEPS: { id: StepId; label: string; icon: LucideIcon }[] = [
@@ -514,6 +515,8 @@ export function AccountWizard({
       name: name.trim(),
       provider: providerId ?? 'custom',
       businessId: businessMode === 'existing' ? businessId : null,
+      // Its group in the sidebar: no business is a personal mailbox.
+      kind: businessMode === 'none' ? 'personal' : 'business',
     });
     if (businessMode === 'new') {
       await saveBusiness.mutateAsync({
@@ -549,7 +552,7 @@ export function AccountWizard({
             <StepHeader
               icon={Layers}
               title={t('Vous utilisez ZMail pour…')}
-              subtitle={t('Vos catégories de départ en dépendent : moins de catégories, moins de bruit. Vous pourrez en ajouter à tout moment.')}
+              subtitle={t('ZMail démarre avec quelques catégories essentielles. Livraisons, voyages, opportunités ou litiges s’ajoutent en un clic dans Réglages → Catégories.')}
             />
             <div className="grid gap-2">
               {USAGES.map((u) => (
@@ -691,7 +694,26 @@ export function AccountWizard({
           </>
         ) : null}
 
-        {step === 'password' ? (
+        {step === 'password' && providerId === 'outlook' ? (
+          <>
+            <StepHeader
+              brand={brandForProvider(providerId)}
+              icon={KeyRound}
+              title={t('Connectez votre compte Microsoft')}
+              subtitle={email ? t('Pour {email}, sur la page officielle de Microsoft.', { email }) : t('Sur la page officielle de Microsoft.')}
+            />
+            <MicrosoftSignIn
+              email={email}
+              signed={password.startsWith('oauth:')}
+              onSigned={(state) => {
+                setPassword(`oauth:${state}`);
+                // Signed in: straight to the next step, like a recognised code.
+                clearTimeout(autoNext.current);
+                autoNext.current = setTimeout(() => go('servers'), 900);
+              }}
+            />
+          </>
+        ) : step === 'password' ? (
           <>
             <StepHeader
               brand={brandForProvider(providerId)}
@@ -1030,7 +1052,12 @@ export function AccountWizard({
             result={test.data ?? null}
             created={created}
             error={connectError?.message ?? test.error?.message ?? null}
-            onFix={(target) => go(target)}
+            microsoft={providerId === 'outlook'}
+            onFix={(target) => {
+              // Back to the Microsoft step: a fresh sign-in (another account, or the access granted again).
+              if (target === 'password' && providerId === 'outlook') setPassword('');
+              go(target);
+            }}
             onRetry={() => void connect()}
             onFinish={() => (onDone ? onDone() : navigate('/mail/inbox'))}
             onAnother={() => {
@@ -1372,6 +1399,7 @@ function ServerEditor(props: {
 }
 
 function ConnectStep(props: {
+  microsoft?: boolean;
   email: string;
   testing: boolean;
   creating: boolean;
@@ -1479,7 +1507,7 @@ function ConnectStep(props: {
               onClick={() => props.onFix('password')}
               className="bg-primary text-primary-foreground hover:bg-primary/90 flex h-9 items-center gap-1.5 rounded-lg px-3.5 text-[13px] font-medium"
             >
-              <KeyRound className="size-3.5" /> {t('Corriger le mot de passe')}
+              <KeyRound className="size-3.5" /> {props.microsoft ? t('Se reconnecter avec Microsoft') : t('Corriger le mot de passe')}
             </button>
           ) : null}
           <button

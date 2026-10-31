@@ -31,11 +31,16 @@ import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel,
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
 import { BlockedImagesNotice, EmailBody } from './email-body';
+import { FindInMail } from './find-in-mail';
+import { flushViews, registerView, trackGesture } from '@/lib/track';
 import { Composer, type ComposeMode } from './composer';
 import { BusinessBadge, PRIORITY_META, SenderAvatar, TagChip } from './chips';
 import { ReplyTree, type ReplyNode } from './reply-tree';
 import { AuthBadge, MessageInfo, MessageMenu } from './message-extras';
 import { useCatalog } from '@/hooks/use-catalog';
+import { useSpaces } from '@/hooks/use-space';
+import { SpaceIcon } from '@/components/sidebar/spaces';
+import { useMailRoute } from '@/hooks/use-mail-route';
 import { useThreadActions, type ThreadAction } from '@/hooks/use-thread-actions';
 import { useTRPC, type Message, type Thread } from '@/lib/trpc';
 import { copyText, openExternal } from '@/lib/native';
@@ -70,6 +75,8 @@ export function ThreadView({ threadId, focusMessageId, onClose }: { threadId: st
   const open = useMutation(trpc.mail.open.mutationOptions());
   const opened = useRef<string | null>(null);
   const [composer, setComposer] = useState<{ mode: ComposeMode; message: Message } | null>(null);
+  // What ⌘F searches: the conversation's text and its mails' frames.
+  const content = useRef<HTMLDivElement>(null);
   // The message to bring into view: picked in the list's reply tree, the map, or an "in reply to" link.
   const [focus, setFocus] = useState<{ id: string; n: number } | null>(focusMessageId ? { id: focusMessageId, n: 1 } : null);
   const focusOn = (id: string) => setFocus((f) => ({ id, n: (f?.n ?? 0) + 1 }));
@@ -86,6 +93,54 @@ export function ThreadView({ threadId, focusMessageId, onClose }: { threadId: st
       void open.mutateAsync({ threadId: thread.id }).then(() => queryClient.invalidateQueries({ queryKey: trpc.mail.counts.queryKey() }));
     }
   }, [thread, open, patchLists, queryClient, trpc]);
+  // How long the conversation stays on screen (window hidden: paused) and how far down it is read,
+  // for the habits analysis: « deleted after 2 s » and « read to the end » say different things.
+  const shown = thread?.id;
+  useEffect(() => {
+    if (!shown) return;
+    const scroller = content.current?.parentElement;
+    let since: number | null = document.visibilityState === 'visible' ? performance.now() : null;
+    let total = 0;
+    let depth = 0;
+    const measure = () => {
+      if (!scroller) return;
+      const max = scroller.scrollHeight - scroller.clientHeight;
+      depth = Math.max(depth, max <= 4 ? 1 : scroller.scrollTop / max);
+    };
+    const onVisibility = () => {
+      if (document.visibilityState === 'visible') since = performance.now();
+      else if (since !== null) (total += performance.now() - since), (since = null);
+    };
+    // Sends the reading so far and starts again from zero (also called just before a decision).
+    const flush = () => {
+      if (since !== null) total += performance.now() - since;
+      since = document.visibilityState === 'visible' ? performance.now() : null;
+      // A glance under half a second is a click through, not a reading; a mail left open while
+      // away counts for ten minutes at most.
+      if (total >= 500) trackGesture({ action: 'view', threadId: shown, ms: Math.round(Math.min(total, 600_000)), meta: { depth: Math.round(depth * 100) / 100 } });
+      total = 0;
+    };
+    const unregister = registerView(shown, flush);
+    const frame = requestAnimationFrame(measure);
+    scroller?.addEventListener('scroll', measure, { passive: true });
+    document.addEventListener('visibilitychange', onVisibility);
+    return () => {
+      cancelAnimationFrame(frame);
+      scroller?.removeEventListener('scroll', measure);
+      document.removeEventListener('visibilitychange', onVisibility);
+      unregister();
+      flush();
+    };
+  }, [shown]);
+  // « Répondre », « Transférer »… chosen in the list's right-click menu: the composer opens at once.
+  const route = useMailRoute();
+  useEffect(() => {
+    const mode = route.compose as ComposeMode | null;
+    if (!thread || !mode || !['reply', 'replyAll', 'forward', 'editAsNew'].includes(mode)) return;
+    setComposer({ mode, message: thread.messages.at(-1)! });
+    route.update({ compose: null }, true);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [thread, route.compose]);
 
   if (isPending) {
     return (
@@ -149,6 +204,7 @@ export function ThreadView({ threadId, focusMessageId, onClose }: { threadId: st
           <Star className={cn(thread.starred && 'fill-warning text-warning')} />
         </ToolbarButton>
         <div className="ml-auto flex items-center gap-1">
+          <FindInMail scope={content} />
           <button onClick={() => setComposer({ mode: 'reply', message: latest })} className="hover:bg-accent hover:text-accent-foreground flex h-8 items-center gap-1.5 rounded-lg px-2.5 text-[13px] font-medium">
             <Reply className="size-4" />
             {t('Répondre')}
@@ -157,11 +213,11 @@ export function ThreadView({ threadId, focusMessageId, onClose }: { threadId: st
       </div>
 
       <div className="scrollbar scrollbar-w-1 scrollbar-thumb-border min-h-0 flex-1 overflow-y-auto">
-        <div className="mx-auto w-full max-w-[860px] px-6 pt-5 pb-10">
+        <div ref={content} className="mx-auto w-full max-w-[860px] px-6 pt-5 pb-10">
           <h2 className="text-[19px] leading-snug font-semibold tracking-tight text-balance">{thread.subject || t('(sans objet)')}</h2>
           <TriageBar thread={thread} onChanged={refresh} />
 
-          {thread.otp ? <OtpCard code={thread.otp} date={latest.date} /> : null}
+          {thread.otp ? <OtpCard code={thread.otp} date={latest.date} threadId={thread.id} /> : null}
           <InsightCard thread={thread} />
 
           <ThreadMap thread={thread} activeId={focus?.id ?? null} onSelect={focusOn} />
@@ -170,6 +226,7 @@ export function ThreadView({ threadId, focusMessageId, onClose }: { threadId: st
             {thread.messages.map((message, index) => (
               <MessageCard
                 key={message.id}
+                threadId={thread.id}
                 message={message}
                 parent={message.parentId ? thread.messages.find((m) => m.id === message.parentId) : undefined}
                 previousId={thread.messages[index - 1]?.id}
@@ -177,7 +234,7 @@ export function ThreadView({ threadId, focusMessageId, onClose }: { threadId: st
                 focusToken={focus?.id === message.id ? focus.n : 0}
                 defaultOpen={index === thread.messages.length - 1 || message.unread || focus?.id === message.id}
                 onReply={(mode) => setComposer({ mode, message })}
-                unsubscribe={thread.newsletter && thread.unsubscribe && index === thread.messages.length - 1 ? <UnsubscribeLink threadId={thread.id} /> : null}
+                unsubscribe={thread.unsubscribe && !inSpam && index === thread.messages.length - 1 ? <UnsubscribeLink threadId={thread.id} /> : null}
               />
             ))}
           </div>
@@ -214,6 +271,9 @@ function TriageBar({ thread, onChanged }: { thread: Thread; onChanged: () => voi
   const setTags = useMutation(trpc.mail.setTags.mutationOptions({ onSuccess: onChanged }));
   const setBusiness = useMutation(trpc.mail.setBusiness.mutationOptions({ onSuccess: onChanged }));
   const setPriority = useMutation(trpc.mail.setPriority.mutationOptions({ onSuccess: onChanged }));
+  const { spaces } = useSpaces();
+  const currentSpace = spaces.find((sp) => sp.id === thread.spaceId);
+  const moveToSpace = useMutation(trpc.mail.moveToSpace.mutationOptions({ onSuccess: onChanged, onError: (e) => toast.error(e.message) }));
   const reclassify = useMutation(trpc.mail.reclassify.mutationOptions({ onSuccess: () => (onChanged(), toast.success(t('Mail reclassé par l’IA'))) }));
   const business = thread.businessId ? catalog.businessById.get(thread.businessId) : undefined;
   const tags = thread.tags.map((id) => catalog.tagById.get(id)).filter((t) => t !== undefined);
@@ -264,6 +324,25 @@ function TriageBar({ thread, onChanged }: { thread: Thread; onChanged: () => voi
         </DropdownMenuContent>
       </DropdownMenu>
 
+      {spaces.length > 1 && currentSpace ? (
+        <DropdownMenu>
+          <DropdownMenuTrigger className="text-muted-foreground hover:text-foreground border-border inline-flex h-5 items-center gap-1 rounded-md border px-1.5 text-[11px]" title={t('Espace de la conversation')}>
+            <SpaceIcon space={currentSpace} size={12} />
+            {currentSpace.id === 'main' ? t(currentSpace.name) : currentSpace.name}
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="start">
+            <DropdownMenuLabel>{t('Déplacer vers l’espace')}</DropdownMenuLabel>
+            {spaces.map((space) => (
+              <DropdownMenuItem key={space.id} onClick={() => (flushViews([thread.id]), moveToSpace.mutate({ threadIds: [thread.id], spaceId: space.id }, { onSuccess: () => toast.success(t('Déplacé vers l’espace {space}', { space: space.id === 'main' ? t(space.name) : space.name })) }))}>
+                <SpaceIcon space={space} size={14} />
+                {space.id === 'main' ? t(space.name) : space.name}
+                {space.id === currentSpace.id ? <Check className="ml-auto size-3.5" /> : null}
+              </DropdownMenuItem>
+            ))}
+          </DropdownMenuContent>
+        </DropdownMenu>
+      ) : null}
+
       {tags.map((tag) => (
         <TagChip key={tag.id} tag={tag} onRemove={() => setTags.mutate({ threadIds: [thread.id], add: [], remove: [tag.id] })} />
       ))}
@@ -297,7 +376,7 @@ function TriageBar({ thread, onChanged }: { thread: Thread; onChanged: () => voi
   );
 }
 
-function OtpCard({ code, date }: { code: string; date: number }) {
+function OtpCard({ code, date, threadId }: { code: string; date: number; threadId: string }) {
   const [copied, setCopied] = useState(false);
   const minutes = Math.round((Date.now() - date) / 60000);
   const stale = minutes > 15;
@@ -313,6 +392,7 @@ function OtpCard({ code, date }: { code: string; date: number }) {
       <button
         onClick={() =>
           void copyText(code).then(() => {
+            trackGesture({ action: 'copyOtp', threadId });
             setCopied(true);
             toast.success(t('Code copié'));
             setTimeout(() => setCopied(false), 2000);
@@ -329,7 +409,7 @@ function OtpCard({ code, date }: { code: string; date: number }) {
 
 function InsightCard({ thread }: { thread: Thread }) {
   const engine = thread.messages.at(-1)?.triage?.engine;
-  const engineLabel = engine === 'apple' ? 'Apple Intelligence' : engine === 'heuristic' ? t('Moteur local') : engine?.startsWith('consensus:') ? t('Double vérification') : engine?.startsWith('typesafe/') ? `Jev ${engine.replace(/^typesafe\/jev-/, '')}` : engine ? engine.replace(/^[^/]+\//, '') : null;
+  const engineLabel = engine === 'apple' ? 'Apple Intelligence' : engine === 'heuristic' ? t('Règles ZMail, sans IA') : engine?.startsWith('consensus:') ? t('Double vérification') : engine?.startsWith('typesafe/') ? `Jev ${engine.replace(/^typesafe\/jev-/, '')}` : engine ? engine.replace(/^[^/]+\//, '') : null;
   if (!thread.summary && !thread.opportunity && !thread.spam) return null;
   // Jev and the local engine sort but write no text: their « summary » is the mail's first sentence.
   const written = Boolean(engine && engine !== 'heuristic' && !/^typesafe\//.test(engine));
@@ -461,7 +541,9 @@ function MessageCard({
   defaultOpen,
   onReply,
   unsubscribe,
+  threadId,
 }: {
+  threadId: string;
   message: Message;
   parent?: Message;
   previousId?: string;
@@ -502,7 +584,7 @@ function MessageCard({
   const [info, setInfo] = useState(false);
 
   return (
-    <article ref={card} data-message-id={message.id} className={cn('scroll-mt-4 rounded-xl border border-border transition', !open && 'hover:bg-accent/50')}>
+    <article ref={card} data-message-id={message.id} className={cn('scroll-mt-4 rounded-xl border border-border transition', !open && 'hover:bg-accent/50', 'data-[linked]:border-primary/50 data-[linked]:bg-primary/[0.05] data-[linked]:ring-primary/20 data-[linked]:ring-2')}>
       <header className="flex cursor-default items-center gap-3 px-4 py-3" onClick={() => setOpen(!open)}>
         <SenderAvatar name={message.from.name} email={message.from.email} size={34} />
         <div className="min-w-0 flex-1">
@@ -543,13 +625,14 @@ function MessageCard({
       {open ? (
         <div className="px-4 pb-4">
           {blocked && !allowImages ? <BlockedImagesNotice onAllow={() => setAllowImages(true)} /> : null}
-          <EmailBody messageId={message.id} html={message.html} text={message.text} allowImages={allowImages} onBlockedImages={setBlocked} />
+          <EmailBody messageId={message.id} threadId={threadId} html={message.html} text={message.text} allowImages={allowImages} onBlockedImages={setBlocked} />
           {files.length ? (
             <div className="mt-3 flex flex-wrap gap-2">
               {files.map((file) => (
                 <a
                   key={file.index}
                   href={`/api/messages/${message.id}/attachments/${file.index}?download=1`}
+                  onClick={() => trackGesture({ action: 'downloadAttachment', threadId, meta: { type: file.contentType ?? null, size: file.size } })}
                   className="flex h-10 items-center gap-2 rounded-lg px-3 text-[13px] border border-border transition hover:bg-accent"
                 >
                   <Paperclip className="text-muted-foreground size-3.5" />

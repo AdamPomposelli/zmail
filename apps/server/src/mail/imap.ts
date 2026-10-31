@@ -1,4 +1,5 @@
 import { ImapFlow, type ListResponse } from 'imapflow';
+import type { MailAuth } from './oauth';
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { EngineContext } from '../context';
@@ -21,8 +22,8 @@ const SYNCED: Record<SpecialUse | 'custom', number> = {
   all: 200,
   trash: 100,
   drafts: 50,
-  /** The user's own folders and Gmail labels. */
-  custom: 100,
+  /** The user's own folders and Gmail labels: their latest mails, however old (see syncMailbox). */
+  custom: 200,
 };
 
 /** ZMail's mirror of its tags on the server: already shown as tags, not as folders. */
@@ -53,12 +54,14 @@ export function specialUseOf(box: Pick<ListResponse, 'path' | 'name' | 'specialU
   return NAME_HINTS.find(([, re]) => re.test(leaf))?.[0] ?? null;
 }
 
-export function createImapClient(account: Pick<AccountRecord, 'imapHost' | 'imapPort' | 'imapSecure' | 'username'>, password: string) {
+/** `auth`: a password, or a Microsoft access token (XOAUTH2) for Outlook / Microsoft 365. */
+export function createImapClient(account: Pick<AccountRecord, 'imapHost' | 'imapPort' | 'imapSecure' | 'username'>, auth: string | MailAuth) {
+  const login = typeof auth === 'string' ? { pass: auth } : auth;
   return new ImapFlow({
     host: account.imapHost,
     port: account.imapPort,
     secure: account.imapSecure,
-    auth: { user: account.username, pass: password },
+    auth: { user: account.username, ...login },
     logger: false,
     tls: { rejectUnauthorized: process.env.ZMAIL_INSECURE_TLS !== '1' },
     connectionTimeout: 20_000,
@@ -86,14 +89,18 @@ export class AccountWorker {
   private stopped = false;
   private syncing: Promise<void> | null = null;
   private pendingInboxSync = false;
+  /** Where the current sync stands, for Settings → Accounts. */
+  progress: { folder: string; folderIndex: number; folders: number; fetched: number; toFetch: number } | null = null;
 
   constructor(
     private readonly ctx: EngineContext,
     public account: AccountRecord,
   ) {}
 
-  private get password() {
-    return this.ctx.secrets.decrypt(this.account.secret);
+  /** The password, or a fresh access token for an account signed in with Microsoft (read from the database: tokens get renewed). */
+  private async auth() {
+    const row = this.ctx.db.get<{ secret: string }>('SELECT secret FROM accounts WHERE id = ?', this.account.id);
+    return this.ctx.oauth.resolve(this.ctx.secrets.decrypt(row?.secret ?? this.account.secret), this.account.id);
   }
 
   private setStatus(status: string, error: string | null = null) {
@@ -129,7 +136,7 @@ export class AccountWorker {
   private async startIdle() {
     if (this.stopped) return;
     try {
-      const client = createImapClient(this.account, this.password);
+      const client = createImapClient(this.account, await this.auth());
       client.on('error', (error: Error) => log.warn('imap', this.account.email, 'idle error', error.message));
       client.on('exists', () => this.scheduleInboxSync());
       client.on('expunge', () => this.scheduleInboxSync());
@@ -172,7 +179,7 @@ export class AccountWorker {
     const task = this.queue.then(async () => {
       if (!this.opClient?.usable) {
         await this.opClient?.logout().catch(() => undefined);
-        const client = createImapClient(this.account, this.password);
+        const client = createImapClient(this.account, await this.auth());
         client.on('error', (error: Error) => log.warn('imap', this.account.email, 'op error', error.message));
         await client.connect();
         this.opClient = client;
@@ -191,6 +198,14 @@ export class AccountWorker {
     return this.mailboxes().find((m) => m.special_use === special);
   }
 
+  /** A new folder's id comes from its path, unless a folder moved away from that path still has it. */
+  private mailboxIdFor(path: string) {
+    const known = this.ctx.db.get<{ id: string }>('SELECT id FROM mailboxes WHERE account_id = ? AND path = ?', this.account.id, path);
+    if (known) return known.id;
+    const id = hashId('mb', this.account.id, path);
+    return this.ctx.db.get('SELECT 1 FROM mailboxes WHERE id = ?', id) ? hashId('mb', this.account.id, path, String(Date.now())) : id;
+  }
+
   async refreshFolders(client: ImapFlow) {
     const boxes = await client.list();
     const seen = new Set<SpecialUse>();
@@ -204,7 +219,7 @@ export class AccountWorker {
       this.ctx.db.run(
         `INSERT INTO mailboxes (id, account_id, path, name, special_use, delimiter) VALUES (?, ?, ?, ?, ?, ?)
          ON CONFLICT(account_id, path) DO UPDATE SET name = excluded.name, special_use = excluded.special_use, delimiter = excluded.delimiter`,
-        hashId('mb', this.account.id, box.path),
+        this.mailboxIdFor(box.path),
         this.account.id,
         box.path,
         box.name,
@@ -241,6 +256,13 @@ export class AccountWorker {
 
   private async doSync(options: { refreshFolders?: boolean; only?: SpecialUse[] }) {
     const initial = !this.account.initialSyncDone;
+    // Folders first synced by an older ZMail only got their last 30 days (often nothing): scan
+    // them again once; already stored messages are skipped by uid.
+    const rescanKey = `folders:rescan:${this.account.id}`;
+    if (!this.ctx.db.getSetting<boolean>(rescanKey, false)) {
+      this.ctx.db.run('UPDATE mailboxes SET last_uid = 0 WHERE account_id = ? AND special_use IS NULL', this.account.id);
+      this.ctx.db.setSetting(rescanKey, true);
+    }
     this.setStatus('syncing');
     try {
       const created: string[] = [];
@@ -253,15 +275,22 @@ export class AccountWorker {
           .filter((m) => (m.special_use ? SYNCED[m.special_use] !== undefined : !isZmailFolder(m.path, m.delimiter)))
           .filter((m) => !options.only || (m.special_use !== null && options.only.includes(m.special_use)))
           .sort((a, b) => rank(a) - rank(b));
-        for (const box of boxes) created.push(...(await this.syncMailbox(client, box, initial)));
+        for (const [index, box] of boxes.entries()) {
+          this.progress = { folder: box.special_use ?? box.path.split(box.delimiter ?? "/").at(-1) ?? box.path, folderIndex: index + 1, folders: boxes.length, fetched: 0, toFetch: 0 };
+          const got = await this.syncMailbox(client, box, initial);
+          created.push(...got);
+          // The AI starts on each folder as soon as it is downloaded, not after the whole account.
+          if (got.length) await this.ctx.onMessagesStored(got);
+        }
       });
+      this.progress = null;
       if (initial && !options.only) {
         this.ctx.db.run('UPDATE accounts SET initial_sync_done = 1 WHERE id = ?', this.account.id);
         this.account = { ...this.account, initialSyncDone: true };
       }
       this.setStatus('idle');
-      if (created.length > 0) await this.ctx.onMessagesStored(created);
     } catch (error) {
+      this.progress = null;
       const message = (error as { responseText?: string }).responseText ?? (error as Error).message;
       log.error('imap', this.account.email, 'sync failed', message);
       this.setStatus('error', message);
@@ -285,8 +314,11 @@ export class AccountWorker {
       let uids: number[] = [];
       if (status.exists > 0) {
         if (lastUid === 0) {
-          const since = new Date(Date.now() - this.account.syncDays * 86400_000);
-          const found = (await client.search({ since }, { uid: true })) || [];
+          // Standard folders: the recent window (sync days). The user's own folders and labels are
+          // filed on purpose, often long ago (an accounting label whose last mail is months old):
+          // their latest mails come whatever their date, or the folder would stay empty forever.
+          const window = box.special_use ? { since: new Date(Date.now() - this.account.syncDays * 86400_000) } : { all: true };
+          const found = (await client.search(window, { uid: true })) || [];
           uids = found.slice(-SYNCED[box.special_use ?? 'custom']);
         } else {
           const found = (await client.search({ uid: `${lastUid + 1}:*` }, { uid: true })) || [];
@@ -295,34 +327,8 @@ export class AccountWorker {
       }
 
       const isNewMail = !initialAccount && box.uidvalidity !== null && ['inbox', 'junk'].includes(box.special_use!);
-      const rawDir = join(this.ctx.dataDir, 'raw', this.account.id);
-      await mkdir(rawDir, { recursive: true });
-
-      for (let i = 0; i < uids.length; i += 50) {
-        const batch = uids.slice(i, i + 50);
-        for await (const msg of client.fetch(batch, { uid: true, flags: true, source: true, size: true }, { uid: true })) {
-          if (!msg.source) continue;
-          const parsed = await parseEmail(msg.source);
-          const result = this.ctx.store.upsert(
-            {
-              ...parsed,
-              accountId: this.account.id,
-              mailboxId: box.id,
-              uid: msg.uid,
-              unread: !msg.flags?.has('\\Seen'),
-              starred: Boolean(msg.flags?.has('\\Flagged')),
-              size: msg.size ?? msg.source.length,
-              isNew: isNewMail,
-            },
-            uidvalidity,
-          );
-          if (result.inserted) {
-            await writeFile(join(rawDir, `${result.id}.eml`), msg.source);
-            created.push(result.id);
-          }
-          lastUid = Math.max(lastUid, msg.uid);
-        }
-      }
+      created.push(...(await this.fetchInto(client, box, uids, uidvalidity, isNewMail)));
+      if (uids.length) lastUid = Math.max(lastUid, ...uids);
 
       await this.reconcileFlags(client, box, uidvalidity);
       this.ctx.db.run(
@@ -336,6 +342,70 @@ export class AccountWorker {
     } finally {
       lock.release();
     }
+  }
+
+  /** Downloads these messages of a folder and stores them (raw copy kept for details/attachments). */
+  private async fetchInto(client: ImapFlow, box: MailboxRow, uids: number[], uidvalidity: string, isNew: boolean) {
+    const created: string[] = [];
+    const rawDir = join(this.ctx.dataDir, 'raw', this.account.id);
+    await mkdir(rawDir, { recursive: true });
+    if (this.progress) this.progress.toFetch += uids.length;
+    for (let i = 0; i < uids.length; i += 50) {
+      const batch = uids.slice(i, i + 50);
+      for await (const msg of client.fetch(batch, { uid: true, flags: true, source: true, size: true }, { uid: true })) {
+        if (!msg.source) continue;
+        const parsed = await parseEmail(msg.source);
+        const result = this.ctx.store.upsert(
+          {
+            ...parsed,
+            accountId: this.account.id,
+            mailboxId: box.id,
+            uid: msg.uid,
+            unread: !msg.flags?.has('\\Seen'),
+            starred: Boolean(msg.flags?.has('\\Flagged')),
+            size: msg.size ?? msg.source.length,
+            isNew,
+          },
+          uidvalidity,
+        );
+        if (this.progress) this.progress.fetched++;
+        if (result.inserted) {
+          await writeFile(join(rawDir, `${result.id}.eml`), msg.source);
+          created.push(result.id);
+        }
+      }
+    }
+    return created;
+  }
+
+  /**
+   * The next older page of a folder, straight from the server (scrolling to the bottom of a folder
+   * past what the sync keeps). `more` says whether the server still has older mails.
+   */
+  async loadOlder(mailboxId: string, count = 100): Promise<{ fetched: number; more: boolean }> {
+    const box = this.mailboxes().find((m) => m.id === mailboxId);
+    if (!box) return { fetched: 0, more: false };
+    const oldest = this.ctx.db.get<{ uid: number | null }>('SELECT MIN(uid) AS uid FROM messages WHERE mailbox_id = ? AND uid > 0', mailboxId)?.uid ?? null;
+    const result = await this.run(async (client) => {
+      const lock = await client.getMailboxLock(box.path, READ_ONLY);
+      try {
+        const status = client.mailbox;
+        if (!status || status === true || status.exists === 0) return { created: [] as string[], more: false };
+        const uidvalidity = String(status.uidValidity);
+        const range = oldest ? `1:${oldest - 1}` : '1:*';
+        const older = oldest === 1 ? [] : (await client.search({ uid: range }, { uid: true })) || [];
+        const page = older.slice(-count);
+        const created = await this.fetchInto(client, box, page, uidvalidity, false);
+        return { created, more: older.length > page.length };
+      } finally {
+        lock.release();
+      }
+    });
+    if (result.created.length) {
+      bus.emitEvent({ type: 'mail', reason: 'new', threadIds: [] });
+      await this.ctx.onMessagesStored(result.created);
+    }
+    return { fetched: result.created.length, more: result.more };
   }
 
   /** Mirrors flag changes and expunges made by other clients for locally known messages. */
@@ -380,6 +450,170 @@ export class AccountWorker {
     if (!created) throw new Error(t('Impossible de créer le dossier {name}', { name: fallbackName }));
     this.ctx.db.run('UPDATE mailboxes SET special_use = ? WHERE id = ?', special, created.id);
     return { ...created, special_use: special };
+  }
+
+  /**
+   * Moves one of the user's folders under another one (or to the top level) on the server: an
+   * IMAP RENAME, so every other mail app sees the new place. Its subfolders follow; the local
+   * copy keeps its mails and ids, only the paths change.
+   */
+  async moveFolder(mailboxId: string, parentId: string | null) {
+    const box = this.userFolder(mailboxId);
+    const parent = parentId ? this.mailboxes().find((m) => m.id === parentId) : null;
+    if (parentId && !parent) throw new Error(t('Dossier introuvable'));
+    const delimiter = box.delimiter ?? parent?.delimiter ?? '/';
+    const leaf = box.path.split(delimiter).at(-1) ?? box.path;
+    if (parent && this.inside(box, parent.path)) throw new Error(t('Un dossier ne peut pas aller dans un de ses sous-dossiers.'));
+    return this.relocate(box, parent ? `${parent.path}${delimiter}${leaf}` : leaf);
+  }
+
+  /** Renames one of the user's folders on the server (IMAP RENAME); it stays where it is. */
+  async renameFolder(mailboxId: string, name: string) {
+    const box = this.userFolder(mailboxId);
+    const delimiter = box.delimiter ?? '/';
+    const clean = this.folderName(name, delimiter);
+    const parts = box.path.split(delimiter);
+    return this.relocate(box, [...parts.slice(0, -1), clean].join(delimiter));
+  }
+
+  /** Creates a folder on the server (IMAP CREATE), at the top level or inside another one. */
+  async createFolder(parentId: string | null, name: string) {
+    const parent = parentId ? this.mailboxes().find((m) => m.id === parentId) : null;
+    if (parentId && !parent) throw new Error(t('Dossier introuvable'));
+    const delimiter = parent?.delimiter ?? this.mailboxes().find((m) => m.delimiter)?.delimiter ?? '/';
+    const clean = this.folderName(name, delimiter);
+    return this.run(async (client) => {
+      const wanted = parent ? `${parent.path}${delimiter}${clean}` : clean;
+      if (this.mailboxes().some((m) => m.path.toLowerCase() === wanted.toLowerCase())) throw new Error(t('Un dossier « {name} » existe déjà à cet endroit.', { name: clean }));
+      const created = (await client.mailboxCreate(wanted)).path || wanted;
+      await client.mailboxSubscribe(created).catch(() => undefined);
+      await this.refreshFolders(client);
+      const row = this.mailboxes().find((m) => m.path === created);
+      if (!row) throw new Error(t('Le serveur n’a pas créé le dossier.'));
+      return { id: row.id, path: created };
+    });
+  }
+
+  /**
+   * Deletes one of the user's folders and its subfolders on the server (IMAP DELETE). Their mails
+   * go to the Trash first unless `toTrash` is false: an IMAP DELETE erases them for good.
+   */
+  async deleteFolder(mailboxId: string, { toTrash = true }: { toTrash?: boolean } = {}) {
+    const box = this.userFolder(mailboxId);
+    const doomed = this.mailboxes()
+      .filter((m) => this.inside(box, m.path))
+      .sort((x, y) => y.path.length - x.path.length);
+    const trash = toTrash ? await this.ensureMailbox('trash', 'Trash') : null;
+    // 1. Their mails to the Trash. 2. The folders, deepest first, from a connection that has none
+    // of them open: some servers cut the connection on a DELETE right after working in that folder.
+    let moved = 0;
+    if (trash) {
+      moved = await this.run(async (client) => {
+        let count = 0;
+        for (const folder of doomed) {
+          const lock = await client.getMailboxLock(folder.path);
+          try {
+            const exists = typeof client.mailbox === 'object' ? client.mailbox.exists : 0;
+            if (exists) {
+              await client.messageMove('1:*', trash.path);
+              count += exists;
+            }
+          } finally {
+            lock.release();
+          }
+        }
+        if (client.mailbox) await client.mailboxClose().catch(() => undefined);
+        return count;
+      });
+    }
+    // On its own short-lived connection: some servers (GreenMail) cut the one that has just read
+    // or flagged the folder when it is deleted.
+    const remove = async () => {
+      const client = createImapClient(this.account, await this.auth());
+      client.on('error', (error: Error) => log.warn('imap', this.account.email, 'delete error', error.message));
+      await client.connect();
+      try {
+        const present = new Set((await client.list()).map((m) => m.path));
+        for (const folder of doomed) {
+          if (!present.has(folder.path)) continue;
+          // Out of the subscriptions first, so no client keeps showing a ghost folder.
+          await client.mailboxUnsubscribe(folder.path).catch(() => undefined);
+          await client.mailboxDelete(folder.path);
+        }
+        const left = new Set((await client.list()).map((m) => m.path));
+        if (doomed.some((f) => left.has(f.path))) throw new Error(t('Le serveur n’a pas supprimé le dossier.'));
+      } finally {
+        await client.logout().catch(() => undefined);
+      }
+    };
+    await remove();
+    // Their mails leave the local copy too; those moved to the Trash come back with its next sync.
+    await this.run((client) => this.refreshFolders(client));
+    if (trash && moved) await this.syncFolder(trash.id).catch(() => undefined);
+    return { deleted: doomed.length, moved };
+  }
+
+  /** Marks every mail of a folder as read, on the server and here. */
+  async markFolderRead(mailboxId: string) {
+    const box = this.mailboxes().find((m) => m.id === mailboxId);
+    if (!box) throw new Error(t('Dossier introuvable'));
+    await this.run(async (client) => {
+      const lock = await client.getMailboxLock(box.path);
+      try {
+        if (typeof client.mailbox === 'object' && client.mailbox.exists) await client.messageFlagsAdd('1:*', ['\\Seen']);
+      } finally {
+        lock.release();
+      }
+      // Leave the folder: a connection parked in it keeps some servers from deleting it later.
+      await client.mailboxClose().catch(() => undefined);
+    });
+    const threads = this.ctx.db.all<{ thread_id: string }>('SELECT DISTINCT thread_id FROM messages WHERE mailbox_id = ? AND unread = 1', box.id).map((r) => r.thread_id);
+    this.ctx.db.run('UPDATE messages SET unread = 0 WHERE mailbox_id = ?', box.id);
+    bus.emitEvent({ type: 'mail', reason: 'changed', threadIds: threads });
+    return { threads: threads.length };
+  }
+
+  /** A folder the user made (not Inbox, Sent, Trash…), or an error. */
+  private userFolder(mailboxId: string) {
+    const box = this.mailboxes().find((m) => m.id === mailboxId);
+    if (!box) throw new Error(t('Dossier introuvable'));
+    if (box.special_use) throw new Error(t('Les dossiers système (Boîte de réception, Envoyés…) ne se modifient pas.'));
+    return box;
+  }
+
+  private inside(box: MailboxRow, path: string) {
+    return path === box.path || path.startsWith(`${box.path}${box.delimiter ?? '/'}`);
+  }
+
+  private folderName(name: string, delimiter: string) {
+    const clean = name.trim();
+    if (!clean) throw new Error(t('Le nom du dossier est vide.'));
+    if (clean.includes(delimiter)) throw new Error(t('Le nom ne peut pas contenir « {delimiter} ».', { delimiter }));
+    return clean;
+  }
+
+  /** Moves a folder (and its subfolders) to `wanted` with an IMAP RENAME; ids and mails stay. */
+  private relocate(box: MailboxRow, wanted: string) {
+    const delimiter = box.delimiter ?? '/';
+    const leaf = wanted.split(delimiter).at(-1) ?? wanted;
+    return this.run(async (client) => {
+      if (wanted === box.path) return { path: box.path };
+      // Renaming only the case (« spam » → « Spam ») is the same folder, not a clash.
+      if (this.mailboxes().some((m) => m.id !== box.id && m.path.toLowerCase() === wanted.toLowerCase())) throw new Error(t('Un dossier « {name} » existe déjà à cet endroit.', { name: leaf }));
+      if (typeof client.mailbox === 'object' && this.inside(box, client.mailbox.path)) await client.mailboxClose().catch(() => undefined);
+      // imapflow adds the server's prefix (« INBOX. ») when it needs one: its answer is the real path.
+      const target = (await client.mailboxRename(box.path, wanted)).newPath || wanted;
+      // Some servers answer OK without moving anything: only what the server now lists counts.
+      if (!(await client.list()).some((m) => m.path === target)) throw new Error(t('Le serveur n’a pas déplacé le dossier : il est resté à sa place.'));
+      this.ctx.db.tx(() => {
+        for (const m of this.mailboxes().filter((x) => this.inside(box, x.path))) {
+          const path = target + m.path.slice(box.path.length);
+          this.ctx.db.run('UPDATE mailboxes SET path = ?, name = ? WHERE id = ?', path, path.split(delimiter).at(-1) ?? path, m.id);
+        }
+      });
+      await this.refreshFolders(client);
+      return { path: target };
+    });
   }
 
   /** Moves messages to another folder; returns old uid → new uid when the server reports it (UIDPLUS). */

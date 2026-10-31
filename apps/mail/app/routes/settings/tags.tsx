@@ -1,6 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Palette, Plus, RotateCcw, Trash2 } from 'lucide-react';
-import { TagStyleGrid, TagStylePopover } from '@/components/tag-style-picker';
+import { TagStylePopover } from '@/components/tag-style-picker';
+import { IconPicker } from '@/components/icon-picker';
 import { useState } from 'react';
 import { toast } from 'sonner';
 import { Dialog, DialogContent, DialogDescription, DialogTitle } from '@/components/ui/dialog';
@@ -12,6 +13,7 @@ import { CategoryPacks } from '@/components/category-packs';
 import { RetriageButton, RetriagePanel } from '@/components/retriage';
 import { Card, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
 import { useCatalog } from '@/hooks/use-catalog';
+import { MAIN_SPACE, useSpaces } from '@/hooks/use-space';
 import { useTRPC, type Tag } from '@/lib/trpc';
 import { PALETTE } from '@/lib/utils';
 import { t, tp } from '@/lib/i18n';
@@ -37,11 +39,13 @@ export default function TagSettings() {
   const hidden = allHidden?.filter((tag) => !inPacks.has(tag.id));
   const system = catalog.tags.filter((tag) => tag.kind === 'system');
   const custom = catalog.tags.filter((tag) => tag.kind === 'custom');
+  const { spaces, space, spaceId } = useSpaces();
 
   const row = (tag: Tag) => (
     <li key={tag.id} className="flex items-start gap-3 py-2.5">
-      <div className="w-[170px] shrink-0 pt-0.5">
+      <div className="w-[170px] shrink-0 space-y-1 pt-0.5">
         <TagChip tag={tag} size="md" />
+        {tag.spaceId ? <span className="text-muted-foreground block text-[11px]">{t('Espace « {space} »', { space: spaces.find((sp) => sp.id === tag.spaceId)?.name ?? '' })}</span> : null}
       </div>
       <p className="text-muted-foreground min-w-0 flex-1 text-[12.5px] leading-relaxed">{(tag.kind === 'system' && tag.description ? t(tag.description) : tag.description) || '—'}</p>
       <div className="flex gap-1">
@@ -130,11 +134,26 @@ export default function TagSettings() {
               </div>
               <div className="space-y-1.5">
                 <Label>{t('Icône et couleur')}</Label>
-                <TagStyleGrid value={{ icon: draft.icon, color: draft.color }} onChange={({ icon, color }) => setDraft({ ...draft, icon, color })} />
+                <div className="border-border rounded-xl border p-3">
+                  <IconPicker
+                    title={draft.name || t('Nouvelle catégorie')}
+                    value={draft.icon}
+                    color={draft.color}
+                    dot
+                    fallback={<span className="size-2.5 rounded-full" style={{ backgroundColor: draft.color }} />}
+                    onChange={(icon) => setDraft({ ...draft, icon })}
+                    onColor={(color) => setDraft({ ...draft, color })}
+                  />
+                </div>
               </div>
+              {!draft.id && spaces.length > 1 && space ? (
+                <p className="text-muted-foreground text-[12px]">
+                  {space.id === MAIN_SPACE ? t('Visible dans tous les espaces.') : t('Créée dans l’espace « {space} » : visible seulement là.', { space: space.name })}
+                </p>
+              ) : null}
               <div className="flex justify-end gap-2">
                 <GhostButton onClick={() => setDraft(null)}>{t('Annuler')}</GhostButton>
-                <PrimaryButton disabled={!draft.name.trim()} onClick={() => save.mutate({ ...draft, name: draft.name.trim() }, { onSuccess: () => setDraft(null) })}>
+                <PrimaryButton disabled={!draft.name.trim()} onClick={() => save.mutate({ ...draft, name: draft.name.trim(), ...(draft.id ? {} : { spaceId }) }, { onSuccess: () => setDraft(null) })}>
                   {t('Enregistrer')}
                 </PrimaryButton>
               </div>

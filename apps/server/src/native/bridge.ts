@@ -54,12 +54,15 @@ export class NativeBridge {
     kind: string;
     otp?: string | null;
     threadId?: string | null;
-  }): Promise<'native' | 'osascript' | 'failed'> {
+  }): Promise<'native' | 'card' | 'denied' | 'osascript' | 'failed'> {
     if (this.connected) {
       try {
-        await this.request('POST', '/notify', input, 5000);
-        return 'native';
+        const reply = (await this.request('POST', '/notify', input, 5000)) as { delivered?: string } | undefined;
+        // A code goes on ZMail's floating card; the rest is a macOS notification.
+        return reply?.delivered === 'card' ? 'card' : 'native';
       } catch (error) {
+        // macOS has ZMail's notifications turned off: say so (the app shows them in-app instead).
+        if (String((error as Error).message).includes('notifications_denied')) return 'denied';
         log.warn('bridge', 'notify failed, falling back to osascript', error);
       }
     }

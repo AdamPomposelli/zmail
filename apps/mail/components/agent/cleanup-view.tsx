@@ -5,6 +5,7 @@ import { useNavigate } from 'react-router';
 import { toast } from 'sonner';
 import { SolarIcon } from '@/components/ui/solar-icon';
 import { useTRPC, type Outputs } from '@/lib/trpc';
+import { useSpaces } from '@/hooks/use-space';
 import { cn, formatListDate } from '@/lib/utils';
 import { formatDuration } from '@/lib/savings';
 import { t, tp } from '@/lib/i18n';
@@ -26,14 +27,15 @@ const DECISIONS = [
 export function CleanupView({ runId, onStarted }: { runId: string | null; onStarted: (runId: string) => void }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
+  const { spaceId } = useSpaces();
   const start = useMutation(trpc.cleanup.start.mutationOptions());
   const started = useRef(false);
-  const remaining = useQuery({ ...trpc.cleanup.remaining.queryOptions(), enabled: !runId });
+  const remaining = useQuery({ ...trpc.cleanup.remaining.queryOptions({ spaceId }), enabled: !runId });
 
   useEffect(() => {
     if (runId || started.current) return;
     started.current = true;
-    start.mutate(undefined, {
+    start.mutate({ spaceId }, {
       onSuccess: (run) => {
         onStarted(run.id);
         void queryClient.invalidateQueries();

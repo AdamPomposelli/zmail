@@ -37,6 +37,8 @@ export type Savings = {
   unsubscribed: number;
   tidied: number;
   replied: number;
+  /** Smart shortcuts used: a sender or a category picked in ⌘K, the agent asked from ⌘K, an @mention. */
+  shortcuts: number;
   /** Estimated time saved, in seconds (see SECONDS). */
   seconds: number;
 };
@@ -60,7 +62,7 @@ export type Remaining = {
  * deciding where it goes (sorting), opening and deleting a spam, copying a code from a mail,
  * finding and using an unsubscribe link, archiving a mail by hand.
  */
-export const SECONDS = { sorted: 4, spam: 8, otp: 20, unsubscribed: 90, tidied: 6, replied: 90, manual: 25, ask: 6 };
+export const SECONDS = { sorted: 4, spam: 8, otp: 20, unsubscribed: 90, tidied: 6, replied: 90, manual: 25, ask: 6, shortcut: 12 };
 
 const QUIET_TAGS = new Set(['newsletter', 'marketing', 'notification']);
 const MINE_TAGS = new Set(['important', 'to-respond', 'opportunity', 'chargeback', 'personal']);
@@ -83,17 +85,24 @@ export class InboxCleaner {
     const unsubscribed = n("SELECT COUNT(*) AS n FROM unsubscribes WHERE status = 'success'");
     const tidied = this.ctx.db.getSetting<number>('cleanup:tidied', 0);
     const replied = this.ctx.db.getSetting<number>('cleanup:replied', 0);
-    const seconds = sorted * SECONDS.sorted + spam * SECONDS.spam + otp * SECONDS.otp + unsubscribed * SECONDS.unsubscribed + tidied * SECONDS.tidied + replied * SECONDS.replied;
-    return { sorted, spam, otp, unsubscribed, tidied, replied, seconds };
+    const shortcuts = this.ctx.db.getSetting<number>('shortcuts:used', 0);
+    const seconds =
+      sorted * SECONDS.sorted + spam * SECONDS.spam + otp * SECONDS.otp + unsubscribed * SECONDS.unsubscribed + tidied * SECONDS.tidied + replied * SECONDS.replied + shortcuts * SECONDS.shortcut;
+    return { sorted, spam, otp, unsubscribed, tidied, replied, shortcuts, seconds };
+  }
+
+  /** One smart shortcut used (it spared opening a view, filtering, or switching to the chat). */
+  trackShortcut() {
+    this.ctx.db.setSetting('shortcuts:used', this.ctx.db.getSetting<number>('shortcuts:used', 0) + 1);
   }
 
   /**
    * One sentence per group of unread mail (what the AI files, what it will ask, what needs
    * the user), written by the model; a plain list of senders when no model answers.
    */
-  async recap() {
+  async recap(spaceId?: string | null) {
     const groups = { tidy: [] as ThreadListItem[], ask: [] as ThreadListItem[], mine: [] as ThreadListItem[] };
-    for (const thread of this.unread()) groups[this.classify(thread).kind].push(thread);
+    for (const thread of this.unread(spaceId)) groups[this.classify(thread).kind].push(thread);
     const tagName = (id: string) => this.ctx.catalog.tags().find((x) => x.id === id)?.name ?? id;
     const brief = (list: ThreadListItem[]) => list.map((m) => ({ from: m.from.name || m.from.email, subject: m.subject, tags: m.tags.map(tagName) }));
     const written = await this.drafter.recap({ tidy: brief(groups.tidy), ask: brief(groups.ask), mine: brief(groups.mine) }).catch(() => null);
@@ -109,8 +118,8 @@ export class InboxCleaner {
     };
   }
 
-  remaining(): Remaining {
-    const threads = this.unread();
+  remaining(spaceId?: string | null): Remaining {
+    const threads = this.unread(spaceId);
     const verdicts = threads.map((t) => this.classify(t));
     const count = (kind: Verdict['kind']) => verdicts.filter((v) => v.kind === kind).length;
     const mine = count('mine');
@@ -140,9 +149,10 @@ export class InboxCleaner {
   }
 
   /** Tidies what it is sure about and returns the run (questions included). */
-  async start(): Promise<CleanupRun> {
+  /** `notify: false` when the user started it from the overview: the questions are right there. */
+  async start(options: { notify?: boolean; spaceId?: string | null } = {}): Promise<CleanupRun> {
     const run: CleanupRun = { id: newId('cln'), at: Date.now(), tidied: [], questions: [], mine: [], undone: false };
-    for (const t of this.unread()) {
+    for (const t of this.unread(options.spaceId)) {
       const verdict = this.classify(t);
       const item = toItem(t);
       if (verdict.kind === 'mine') run.mine.push(item);
@@ -156,12 +166,12 @@ export class InboxCleaner {
       this.ctx.db.setSetting('cleanup:tidied', this.ctx.db.getSetting<number>('cleanup:tidied', 0) + ids.length);
     }
     // The conversations waiting for an answer get a drafted reply, in the background.
-    run.replies = this.unread()
+    run.replies = this.unread(options.spaceId)
       .filter((t) => run.mine.some((m) => m.threadId === t.id) && this.needsReply(t))
       .map((t) => ({ ...toItem(t), draft: null, confident: true, reason: '', status: 'drafting' as const }));
     this.save(run);
     void this.draftAll(run.id);
-    if (run.questions.length) {
+    if (run.questions.length && options.notify !== false) {
       const n = run.questions.length;
       await this.ctx.notifier.send({
         kind: 'agent',
@@ -298,8 +308,9 @@ export class InboxCleaner {
     this.ctx.db.setSetting(RUNS_KEY, [run, ...this.runs().filter((r) => r.id !== run.id)].slice(0, 10));
   }
 
-  private unread(): ThreadListItem[] {
-    return this.ctx.store.listThreads({ view: 'unread', sort: 'date', limit: 500 }).items;
+  /** Unread conversations, within one space when given (each space is cleaned on its own). */
+  private unread(spaceId?: string | null): ThreadListItem[] {
+    return this.ctx.store.listThreads({ view: 'unread', sort: 'date', limit: 500, spaceId }).items;
   }
 
   /** What to do with one unread conversation. */

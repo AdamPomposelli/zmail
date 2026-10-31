@@ -1,5 +1,6 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { BellRing } from 'lucide-react';
+import { BellOff, BellRing } from 'lucide-react';
+import { openExternal } from '@/lib/native';
 import { toast } from 'sonner';
 import { Switch } from '@/components/ui/switch';
 import { Card, GhostButton, Row, SettingsPage } from '@/components/settings/ui';
@@ -19,13 +20,46 @@ export default function NotificationSettings() {
   const { data: history } = useQuery(trpc.notifications.list.queryOptions());
   const { data: rules } = useQuery(trpc.rules.list.queryOptions());
   const save = useMutation(trpc.notifications.saveSettings.mutationOptions({ onSuccess: () => queryClient.invalidateQueries({ queryKey: trpc.notifications.settings.queryKey() }) }));
-  const test = useMutation(trpc.notifications.test.mutationOptions({ onSuccess: (r) => toast(r.delivered === 'native' ? t('Notification envoyée au Centre de notifications') : r.delivered === 'osascript' ? t('Notification envoyée (mode navigateur)') : t('Notification non délivrée — vérifiez les autorisations')) }));
+  const { data: permission } = useQuery({ ...trpc.notifications.permission.queryOptions(), refetchInterval: 5000 });
+  const test = useMutation(
+    trpc.notifications.test.mutationOptions({
+      onSuccess: (r) =>
+        toast(
+          r.delivered === 'card'
+            ? t('Code affiché en haut à droite de l’écran')
+            : r.delivered === 'native'
+              ? t('Notification envoyée au Centre de notifications')
+              : r.delivered === 'denied'
+                ? t('macOS bloque les notifications de ZMail : activez-les dans Réglages Système')
+                : r.delivered === 'osascript'
+                  ? t('Notification envoyée (mode navigateur)')
+                  : t('Notification non délivrée — vérifiez les autorisations'),
+        ),
+    }),
+  );
   if (!settings) return null;
   const set = (patch: Partial<Settings>) => save.mutate({ ...settings, ...patch });
   const notifyRules = rules?.filter((r) => r.actions.some((a) => a.type === 'notify')) ?? [];
 
   return (
     <SettingsPage title={t('Notifications')} description={t('ZMail ne vous dérange que pour l’essentiel. Tout le reste est trié en silence.')} actions={<GhostButton onClick={() => test.mutate({ kind: 'otp' })}><BellRing className="size-3.5" />{t('Tester')}</GhostButton>}>
+      {permission === 'denied' || permission === 'notDetermined' ? (
+        <section className="border-warning/30 bg-warning/[0.07] flex items-start gap-3 rounded-xl border px-4 py-3">
+          <BellOff className="text-warning mt-0.5 size-4 shrink-0" />
+          <div className="min-w-0 flex-1">
+            <p className="text-[13px] font-medium">{t('macOS bloque les notifications de ZMail')}</p>
+            <p className="text-muted-foreground mt-0.5 text-[12.5px]">
+              {t('Vos codes s’affichent quand même, dans une carte en haut à droite de l’écran avec un bouton Copier. Pour être prévenu des mails urgents et des opportunités, autorisez ZMail dans Réglages Système → Notifications.')}
+            </p>
+            <div className="mt-2.5 flex gap-2">
+              <button type="button" onClick={() => openExternal('x-apple.systempreferences:com.apple.Notifications-Settings.extension?id=com.zippy.zmail')} className="bg-foreground text-background hover:bg-foreground/90 h-8 rounded-lg px-3 text-[12.5px] font-medium">
+                {t('Ouvrir Réglages Système')}
+              </button>
+              <GhostButton onClick={() => test.mutate({ kind: 'otp' })}>{t('Voir un code de test')}</GhostButton>
+            </div>
+          </div>
+        </section>
+      ) : null}
       <Card>
         <Row label={t('Notifications macOS')} description={t('Interrupteur général.')}>
           <Switch checked={settings.enabled} onCheckedChange={(enabled) => set({ enabled })} />
@@ -34,7 +68,7 @@ export default function NotificationSettings() {
       <BadgeCard />
       <Card title={t('Me notifier pour')}>
         <div className="-my-1 divide-y divide-border">
-          <Row label={t('Codes OTP')} description={t('Le code apparaît dans la notification avec un bouton « Copier le code ».')}>
+          <Row label={t('Codes OTP')} description={t('Le code s’affiche aussitôt dans une carte en haut à droite de l’écran, par-dessus vos apps, avec un bouton Copier.')}>
             <Switch checked={settings.otp} onCheckedChange={(otp) => set({ otp })} disabled={!settings.enabled} />
           </Row>
           <Row label={t('Mails urgents')} description={t('Litiges, chargebacks, paiements échoués, clients mécontents…')}>

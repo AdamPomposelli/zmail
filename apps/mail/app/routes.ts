@@ -9,6 +9,7 @@ export default [
       layout('routes/settings/layout.tsx', [
         index('routes/settings/index.tsx'),
         route('accounts', 'routes/settings/accounts.tsx'),
+        route('spaces', 'routes/settings/spaces.tsx'),
         route('signatures', 'routes/settings/signatures.tsx'),
         route('businesses', 'routes/settings/businesses.tsx'),
         route('tags', 'routes/settings/tags.tsx'),

@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
 import { createPortal } from 'react-dom';
 
-export type DropTarget = { list: string; index: number };
+/** A place in a list, or `into` a row (a folder dropped onto another folder goes inside it). */
+export type DropTarget = { list: string; index: number; into?: string };
 type Drag = { key: string; list: string; target: DropTarget | null; x: number; y: number; dx: number; dy: number; width: number; html: string };
 
 /**
@@ -10,13 +11,29 @@ type Drag = { key: string; list: string; target: DropTarget | null; x: number; y
  * that follows the pointer, and never fires the row's link at the end of a drag.
  * Lists are elements marked `data-drop-list="<id>"`; rows carry `data-drag-key`.
  */
-export function useSidebarDrag({ canDrop, onDrop }: { canDrop: (key: string, list: string) => boolean; onDrop: (key: string, from: string, to: DropTarget) => void }) {
+export function useSidebarDrag({
+  canDrop,
+  canDropInto,
+  onDrop,
+}: {
+  canDrop: (key: string, list: string) => boolean;
+  /** Rows marked `data-drop-into="<key>"` accept a row dropped onto their middle. */
+  canDropInto?: (key: string, into: string) => boolean;
+  onDrop: (key: string, from: string, to: DropTarget) => void;
+}) {
   const [drag, setDrag] = useState<Drag | null>(null);
   const live = useRef<Drag | null>(null);
-  const callbacks = useRef({ canDrop, onDrop });
-  callbacks.current = { canDrop, onDrop };
+  const callbacks = useRef({ canDrop, canDropInto, onDrop });
+  callbacks.current = { canDrop, canDropInto, onDrop };
 
   const targetAt = useCallback((key: string, x: number, y: number): DropTarget | null => {
+    // The middle half of a row that takes children: inside it. Its edges still mean before/after.
+    const row = document.elementFromPoint(x, y)?.closest<HTMLElement>('[data-drop-into]');
+    const into = row?.dataset.dropInto;
+    if (row && into && into !== key && callbacks.current.canDropInto?.(key, into)) {
+      const box = row.getBoundingClientRect();
+      if (y > box.top + box.height / 4 && y < box.bottom - box.height / 4) return { list: row.closest<HTMLElement>('[data-drop-list]')?.dataset.dropList ?? '', index: -1, into };
+    }
     // Lists can nest (a folder's subfolders): the innermost list under the pointer that accepts
     // this row wins, and only its own rows count, not those of the lists inside it.
     const lists: HTMLElement[] = [];

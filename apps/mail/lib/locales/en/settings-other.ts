@@ -395,4 +395,11 @@ export default {
   'url port localhost openapi swagger documentation endpoint': 'url port localhost openapi swagger documentation endpoint',
   'Liste des raccourcis': 'List of shortcuts',
   'raccourci clavier touche shortcut hotkey': 'shortcut keyboard key hotkey',
+  'Code affiché en haut à droite de l’écran': 'Code shown at the top right of the screen',
+  'macOS bloque les notifications de ZMail : activez-les dans Réglages Système': 'macOS is blocking ZMail’s notifications: turn them on in System Settings',
+  'macOS bloque les notifications de ZMail': 'macOS is blocking ZMail’s notifications',
+  'Vos codes s’affichent quand même, dans une carte en haut à droite de l’écran avec un bouton Copier. Pour être prévenu des mails urgents et des opportunités, autorisez ZMail dans Réglages Système → Notifications.': 'Your codes still show, in a card at the top right of the screen with a Copy button. To be told about urgent emails and opportunities, allow ZMail in System Settings → Notifications.',
+  'Ouvrir Réglages Système': 'Open System Settings',
+  'Voir un code de test': 'Show a test code',
+  'Le code s’affiche aussitôt dans une carte en haut à droite de l’écran, par-dessus vos apps, avec un bouton Copier.': 'The code shows right away in a card at the top right of the screen, over your apps, with a Copy button.',
 } satisfies Record<string, string>;

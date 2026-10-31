@@ -1,4 +1,4 @@
-type NativeMessage = { type: 'setBadge'; count: number } | { type: 'setAppearance'; mode: string; css: string } | { type: 'dictation'; action: 'start' | 'stop'; language?: string } | { type: 'copy'; text: string } | { type: 'openExternal'; url: string } | { type: 'startDrag' } | { type: 'zoomWindow' } | { type: 'setLocale'; locale: 'fr' | 'en' };
+type NativeMessage = { type: 'setBadge'; count: number } | { type: 'setAppearance'; mode: string; css: string } | { type: 'dictation'; action: 'start' | 'stop'; language?: string } | { type: 'copy'; text: string } | { type: 'openExternal'; url: string } | { type: 'startDrag' } | { type: 'zoomWindow' } | { type: 'setLocale'; locale: 'fr' | 'en' } | { type: 'getUpdateState' } | { type: 'checkForUpdates' } | { type: 'installUpdate' };
 
 declare global {
   interface Window {

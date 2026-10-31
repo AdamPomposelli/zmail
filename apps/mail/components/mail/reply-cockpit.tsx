@@ -7,6 +7,7 @@ import { SolarIcon } from '@/components/ui/solar-icon';
 import { Textarea } from '@/components/ui/textarea';
 import { useTRPC, type Outputs } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
+import { revealThread } from '@/lib/reveal';
 import { num, t, tp } from '@/lib/i18n';
 
 type Run = NonNullable<Outputs['cleanup']['run']>;
@@ -31,8 +32,34 @@ export function ReplyCockpit({ runId, onClose }: { runId: string; onClose: () =>
     void queryClient.invalidateQueries({ queryKey: trpc.cleanup.pathKey() });
     void queryClient.invalidateQueries({ queryKey: trpc.mail.counts.queryKey() });
   };
-  const reply = useMutation(trpc.cleanup.reply.mutationOptions({ onSuccess: refresh, onError: (e) => toast.error(e.message) }));
-  const resolve = useMutation(trpc.cleanup.resolve.mutationOptions({ onSuccess: refresh, onError: (e) => toast.error(e.message) }));
+  // Decisions show at once (optimistic UI) and roll back if the engine refuses them.
+  const runKey = trpc.cleanup.run.queryKey({ id: runId });
+  const optimistic = (patch: (run: Run) => Run) => {
+    void queryClient.cancelQueries({ queryKey: runKey });
+    const before = queryClient.getQueryData<Run | null>(runKey);
+    if (before) queryClient.setQueryData(runKey, patch(before));
+    return { before };
+  };
+  const rollback = (error: { message: string }, _input: unknown, context?: { before?: Run | null }) => {
+    if (context?.before) queryClient.setQueryData(runKey, context.before);
+    toast.error(error.message);
+  };
+  const reply = useMutation({
+    mutationFn: trpc.cleanup.reply.mutationOptions().mutationFn,
+    onMutate: ({ threadId, action }) =>
+      // Sending waits for the server (it can fail); skipping and archiving never make the user wait.
+      action === 'skip' || action === 'archive'
+        ? optimistic((run) => ({ ...run, replies: run.replies?.map((r) => (r.threadId === threadId ? { ...r, status: action === 'skip' ? ('skipped' as const) : ('archived' as const) } : r)) }))
+        : { before: undefined },
+    onError: rollback,
+    onSettled: refresh,
+  });
+  const resolve = useMutation({
+    mutationFn: trpc.cleanup.resolve.mutationOptions().mutationFn,
+    onMutate: ({ threadId, decision }) => optimistic((run) => ({ ...run, questions: run.questions.map((q) => (q.threadId === threadId ? { ...q, resolved: decision } : q)) })),
+    onError: rollback,
+    onSettled: refresh,
+  });
   const undo = useMutation(
     trpc.cleanup.undo.mutationOptions({
       onSuccess: () => (refresh(), toast(t('Tri annulé : les mails sont revenus dans la boîte de réception'))),
@@ -119,7 +146,7 @@ export function ReplyCockpit({ runId, onClose }: { runId: string; onClose: () =>
           </h4>
           <div className="border-border divide-border divide-y overflow-hidden rounded-xl border bg-background/60">
             {review.map((r) => (
-              <button key={r.threadId} type="button" onClick={() => setFocus(r.threadId)} className={cn('hover:bg-accent/50 flex w-full items-start gap-3 px-3.5 py-2.5 text-left transition-colors', current?.threadId === r.threadId && 'bg-accent/60')}>
+              <button key={r.threadId} type="button" onClick={() => (setFocus(r.threadId), revealThread(r.threadId))} className={cn('hover:bg-accent/50 flex w-full items-start gap-3 px-3.5 py-2.5 text-left transition-colors', current?.threadId === r.threadId && 'bg-accent/60')}>
                 <Send className="text-muted-foreground mt-0.5 size-3.5 shrink-0" />
                 <span className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-medium">
@@ -133,7 +160,7 @@ export function ReplyCockpit({ runId, onClose }: { runId: string; onClose: () =>
             {questions.map((q) => (
               <div key={q.threadId} className="flex items-start gap-3 px-3.5 py-2.5">
                 <Inbox className="text-muted-foreground mt-0.5 size-3.5 shrink-0" />
-                <Link to={`?thread=${q.threadId}`} className="min-w-0 flex-1">
+                <Link to={`?thread=${q.threadId}`} onClick={() => revealThread(q.threadId)} className="min-w-0 flex-1">
                   <span className="block truncate text-[13px] font-medium hover:underline">
                     {q.from} <span className="text-muted-foreground font-normal">· {q.subject}</span>
                   </span>
@@ -152,7 +179,6 @@ export function ReplyCockpit({ runId, onClose }: { runId: string; onClose: () =>
                       type="button"
                       title={d.label}
                       aria-label={d.label}
-                      disabled={resolve.isPending}
                       onClick={() => resolve.mutate({ runId, threadId: q.threadId, decision: d.id })}
                       className={cn('hover:bg-accent flex size-7 items-center justify-center rounded-md ring-1 ring-border', q.proposal === d.id && 'ring-primary/50 text-primary')}
                     >
@@ -183,7 +209,7 @@ function ReplyCard({ item, busy, onAction }: { item: Reply; busy: boolean; onAct
 
   return (
     <div className="animate-in fade-in slide-in-from-right-4 bg-background mt-4 rounded-xl border border-border p-4 shadow-sm duration-300">
-      <Link to={`?thread=${item.threadId}`} className="group block">
+      <Link to={`?thread=${item.threadId}`} onClick={() => revealThread(item.threadId)} className="group block">
         <p className="truncate text-[13.5px] font-semibold group-hover:underline">{item.from}</p>
         <p className="truncate text-[13px]">{item.subject}</p>
         {item.summary ? <p className="text-muted-foreground mt-0.5 line-clamp-2 text-[12px]">{item.summary}</p> : null}
@@ -236,10 +262,10 @@ function ReplyCard({ item, busy, onAction }: { item: Reply; busy: boolean; onAct
         <button type="button" onClick={() => setRewriting((v) => !v)} disabled={disabled} className="hover:bg-accent flex h-9 items-center gap-1.5 rounded-lg px-3 text-[13px] ring-1 ring-border disabled:opacity-50">
           <RefreshCw className="size-3.5" /> {t('Réécrire')}
         </button>
-        <button type="button" onClick={() => onAction('archive')} disabled={busy} className="hover:bg-accent flex h-9 items-center gap-1.5 rounded-lg px-3 text-[13px] ring-1 ring-border disabled:opacity-50" title={t('Archiver sans répondre')}>
+        <button type="button" onClick={() => onAction('archive')} className="hover:bg-accent flex h-9 items-center gap-1.5 rounded-lg px-3 text-[13px] ring-1 ring-border disabled:opacity-50" title={t('Archiver sans répondre')}>
           <Archive className="size-3.5" /> {t('Sans réponse')}
         </button>
-        <button type="button" onClick={() => onAction('skip')} disabled={busy} className="text-muted-foreground hover:text-foreground ml-auto flex h-9 items-center gap-1.5 px-2 text-[12.5px]" title={t('Garder dans la boîte de réception pour plus tard')}>
+        <button type="button" onClick={() => onAction('skip')} className="text-muted-foreground hover:text-foreground ml-auto flex h-9 items-center gap-1.5 px-2 text-[12.5px]" title={t('Garder dans la boîte de réception pour plus tard')}>
           <SkipForward className="size-3.5" /> {t('Plus tard')}
         </button>
       </div>

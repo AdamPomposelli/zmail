@@ -1,4 +1,5 @@
 import type { AttachmentMeta, MessageView, ThreadDetail, ThreadListItem, Triage, View, Priority } from '../types';
+import { SPACE_EXPR, SPACE_JOINS } from './spaces';
 import { json, type Database, type SQLInputValue } from '../db';
 import type { Address } from '../lib/address';
 import { hashId } from '../lib/ids';
@@ -117,15 +118,18 @@ export function toTriage(row: TriageRow | undefined | null): Triage | null {
   };
 }
 
+/** Mails of a category marked « Masquer de la boîte de réception » stay out of the inbox. */
+const NOT_HIDDEN_FROM_INBOX = `NOT EXISTS (SELECT 1 FROM json_each(COALESCE(t.tags, '[]')) hj JOIN tags ht ON ht.id = hj.value WHERE ht.hide_from_inbox = 1)`;
+
 /** Folder-level scoping of each view; triage-based conditions are added in listThreads. */
 const VIEW_SQL: Record<View, string> = {
   inbox: "mb.special_use = 'inbox' AND COALESCE(t.spam, 0) = 0",
   priority: "mb.special_use = 'inbox' AND COALESCE(t.spam, 0) = 0 AND COALESCE(t.priority, 1) >= 2",
   opportunities: "mb.special_use IN ('inbox', 'archive', 'all') AND COALESCE(t.spam, 0) = 0 AND t.opportunity = 1",
-  otp: "mb.special_use NOT IN ('trash', 'junk', 'sent', 'drafts') AND COALESCE(t.spam, 0) = 0 AND t.otp IS NOT NULL",
+  otp: "COALESCE(mb.special_use, '') NOT IN ('trash', 'junk', 'sent', 'drafts') AND COALESCE(t.spam, 0) = 0 AND t.otp IS NOT NULL",
   newsletters: "mb.special_use = 'inbox' AND COALESCE(t.spam, 0) = 0 AND t.newsletter = 1",
   unread: "mb.special_use = 'inbox' AND COALESCE(t.spam, 0) = 0 AND m.unread = 1",
-  starred: "mb.special_use NOT IN ('trash', 'junk') AND m.starred = 1",
+  starred: "COALESCE(mb.special_use, '') NOT IN ('trash', 'junk') AND m.starred = 1",
   sent: "mb.special_use = 'sent'",
   drafts: "mb.special_use = 'drafts'",
   archive: `mb.special_use IN ('archive', 'all') AND NOT EXISTS (
@@ -144,6 +148,8 @@ export type ListFilters = {
   tagId?: string | null;
   accountId?: string | null;
   mailboxId?: string | null;
+  /** Only this space's mail (see mail/spaces.ts). Server folders (`folder` view) are never scoped. */
+  spaceId?: string | null;
   query?: string | null;
   sort?: 'smart' | 'date';
   limit?: number;
@@ -152,6 +158,23 @@ export type ListFilters = {
 
 export class MailStore {
   constructor(private readonly db: Database) {}
+
+  /** Senders matching what is typed (name or address), the most frequent first: ⌘K and @ mentions. */
+  senders(query: string, limit = 6) {
+    const like = `%${query.trim().toLowerCase()}%`;
+    return this.db
+      .all<{ email: string; name: string | null; n: number; last: number }>(
+        `SELECT lower(m.from_email) AS email, MAX(m.from_name) AS name, COUNT(*) AS n, MAX(m.date) AS last
+         FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
+         WHERE COALESCE(mb.special_use, '') NOT IN ('sent', 'drafts', 'junk', 'trash')
+           AND (lower(m.from_email) LIKE ? OR lower(COALESCE(m.from_name, '')) LIKE ?)
+         GROUP BY lower(m.from_email) ORDER BY n DESC, last DESC LIMIT ?`,
+        like,
+        like,
+        limit,
+      )
+      .map((r) => ({ email: r.email, name: r.name || null, count: r.n }));
+  }
 
   findThreadId(accountId: string, messageIds: string[]): string | null {
     const ids = messageIds.filter(Boolean);
@@ -347,7 +370,10 @@ export class MailStore {
   }
 
   listThreads(filters: ListFilters): { items: ThreadListItem[]; nextOffset: number | null } {
-    const where: string[] = [VIEW_SQL[filters.view]];
+    // A search from the inbox (⌘K « everywhere ») also finds archived and filed mail; never the
+    // trash, spam or drafts.
+    const searching = filters.view === 'inbox' && Boolean(filters.query?.trim()) && !filters.mailboxId;
+    const where: string[] = [searching ? "COALESCE(mb.special_use, '') NOT IN ('trash', 'junk', 'drafts') AND COALESCE(t.spam, 0) = 0" : VIEW_SQL[filters.view]];
     const params: SQLInputValue[] = [];
     if (filters.accountId) {
       where.push('m.account_id = ?');
@@ -363,11 +389,24 @@ export class MailStore {
       where.push('t.business_id = ?');
       params.push(filters.businessId);
     }
+    // An account or a server folder picked in the sidebar shows all of it, whatever the space.
+    if (filters.spaceId && filters.view !== 'folder' && !filters.accountId && !filters.mailboxId) {
+      where.push(`${SPACE_EXPR} = ?`);
+      params.push(filters.spaceId);
+    }
     if (filters.tagId) {
       where.push('EXISTS (SELECT 1 FROM json_each(t.tags) j WHERE j.value = ?)');
       params.push(filters.tagId);
     }
-    const query = filters.query?.trim();
+    // The inbox itself (not a category, an account, a folder or a search): a search finds them all.
+    else if (filters.view === 'inbox' && !filters.accountId && !filters.mailboxId && !filters.businessId && !filters.query?.trim()) where.push(NOT_HIDDEN_FROM_INBOX);
+    // `from:adresse` (typed, or a sender picked in ⌘K) narrows to one sender; the rest is full text.
+    const senders: string[] = [];
+    const query = filters.query?.replace(/(^|\s)from:(\S+)/gi, (_, space: string, who: string) => (senders.push(who.toLowerCase()), space)).trim();
+    if (senders.length) {
+      where.push(`(${senders.map(() => '(lower(m.from_email) = ? OR lower(m.from_email) LIKE ?)').join(' OR ')})`);
+      for (const who of senders) params.push(who, who.includes('@') ? who : `%${who}%`);
+    }
     if (query) {
       const fts = query
         .split(/\s+/)
@@ -395,13 +434,16 @@ export class MailStore {
           thread_priority: number;
           account_email: string;
           account_color: string;
+          space_id: string;
         }
     >(
       `WITH scoped AS (
-         SELECT m.*, mb.special_use, t.business_id, t.priority, t.tags, t.spam, t.otp, t.opportunity, t.newsletter, t.summary
+         SELECT m.*, mb.special_use, t.business_id, t.priority, t.tags, t.spam, t.otp, t.opportunity, t.newsletter, t.summary,
+           ${SPACE_EXPR} AS space_id
          FROM messages m
          JOIN mailboxes mb ON mb.id = m.mailbox_id
          LEFT JOIN triage t ON t.message_id = m.id
+         ${SPACE_JOINS}
          WHERE ${where.join(' AND ')}
        ), ranked AS (
          SELECT *, ROW_NUMBER() OVER (PARTITION BY thread_id ORDER BY date DESC) AS rn,
@@ -427,6 +469,7 @@ export class MailStore {
         accountId: row.account_id,
         accountEmail: row.account_email,
         accountColor: row.account_color,
+        spaceId: row.space_id,
         subject: row.subject,
         snippet: row.snippet,
         summary: row.summary ?? '',
@@ -582,26 +625,37 @@ export class MailStore {
     };
   }
 
-  counts() {
+  /** Unread counts for the sidebar, within one space (and per space, for the space switcher). */
+  counts(spaceId?: string | null) {
     const row = (sql: string, ...params: SQLInputValue[]) => this.db.get<{ n: number }>(sql, ...params)?.n ?? 0;
+    const scope = spaceId ? ` AND ${SPACE_EXPR} = ?` : '';
+    const sp = spaceId ? [spaceId] : [];
     const base = `SELECT COUNT(DISTINCT m.thread_id) AS n FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
-                  LEFT JOIN triage t ON t.message_id = m.id WHERE`;
+                  LEFT JOIN triage t ON t.message_id = m.id ${SPACE_JOINS} WHERE`;
     const views: Partial<Record<View, number>> = {};
     for (const view of ['inbox', 'priority', 'opportunities', 'otp', 'newsletters', 'spam', 'drafts'] as const) {
-      views[view] = row(`${base} ${VIEW_SQL[view]} AND m.unread = 1`);
+      views[view] = row(`${base} ${VIEW_SQL[view]} AND m.unread = 1${view === 'inbox' ? ` AND ${NOT_HIDDEN_FROM_INBOX}` : ''}${scope}`, ...sp);
     }
     const byBusiness = this.db.all<{ business_id: string; n: number }>(
       `SELECT t.business_id, COUNT(DISTINCT m.thread_id) AS n FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
-       JOIN triage t ON t.message_id = m.id WHERE ${VIEW_SQL.inbox} AND m.unread = 1 AND t.business_id IS NOT NULL
+       JOIN triage t ON t.message_id = m.id ${SPACE_JOINS} WHERE ${VIEW_SQL.inbox} AND m.unread = 1 AND t.business_id IS NOT NULL${scope}
        GROUP BY t.business_id`,
+      ...sp,
     );
     const byTag = this.db.all<{ tag: string; n: number }>(
       `SELECT j.value AS tag, COUNT(DISTINCT m.thread_id) AS n FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
-       JOIN triage t ON t.message_id = m.id, json_each(t.tags) j WHERE ${VIEW_SQL.inbox} AND m.unread = 1 GROUP BY j.value`,
+       JOIN triage t ON t.message_id = m.id ${SPACE_JOINS}, json_each(t.tags) j WHERE ${VIEW_SQL.inbox} AND m.unread = 1${scope} GROUP BY j.value`,
+      ...sp,
     );
+    // Per account, all spaces: clicking an account shows all of it.
     const byAccount = this.db.all<{ account_id: string; n: number }>(
       `SELECT m.account_id, COUNT(DISTINCT m.thread_id) AS n FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
        LEFT JOIN triage t ON t.message_id = m.id WHERE ${VIEW_SQL.inbox} AND m.unread = 1 GROUP BY m.account_id`,
+    );
+    // Unread inbox per space: the badges of the space switcher.
+    const bySpace = this.db.all<{ space: string; n: number }>(
+      `SELECT ${SPACE_EXPR} AS space, COUNT(DISTINCT m.thread_id) AS n FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
+       LEFT JOIN triage t ON t.message_id = m.id ${SPACE_JOINS} WHERE ${VIEW_SQL.inbox} AND m.unread = 1 GROUP BY space`,
     );
     // Unread per server folder (the user's own folders and labels, shown under each account).
     const byMailbox = this.db.all<{ mailbox_id: string; n: number }>(
@@ -614,6 +668,7 @@ export class MailStore {
       businesses: Object.fromEntries(byBusiness.map((r) => [r.business_id, r.n])),
       tags: Object.fromEntries(byTag.map((r) => [r.tag, r.n])),
       accounts: Object.fromEntries(byAccount.map((r) => [r.account_id, r.n])),
+      spaces: Object.fromEntries(bySpace.map((r) => [r.space, r.n])),
     };
   }
 }

@@ -89,6 +89,8 @@ export function mergeTriage(input: {
 
   // Floors that hold whatever the model says.
   if (tags.includes('chargeback')) priority = 3;
+  // A service about to suspend or close one of the user's accounts is never « low ».
+  if (heuristic.accountAlert && priority < 2) priority = 2;
   if (otp) {
     priority = Math.max(priority, 2) as Priority;
     if (!tags.includes('security')) tags.push('security');
@@ -98,6 +100,8 @@ export function mergeTriage(input: {
   if (priority >= 2 && !spam && !tags.includes('important') && !otp) tags.push('important');
   if (priority < 2) tags = tags.filter((t) => t !== 'important');
 
+  // Only categories the user has (a hidden one must not win the topic and leave none).
+  tags = tags.filter((t) => input.knownTags.has(t));
   // One topic per mail, no pile-ups like « Facture + Notification + Sécurité ».
   tags = scopeTags(tags, { securityStrong: Boolean(otp) });
 

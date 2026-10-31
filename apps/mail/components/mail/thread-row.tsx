@@ -1,6 +1,7 @@
-import { Archive, ChevronRight, MailOpen, Paperclip, Star, Trash2 } from 'lucide-react';
+import { Archive, ChevronRight, Flag, MailOpen, Paperclip, Star, Trash2 } from 'lucide-react';
 import { memo } from 'react';
 import { toast } from 'sonner';
+import { ThreadMenu } from './thread-menu';
 import { AiSummary, BusinessBadge, OtpChip, SenderAvatar, TagChip } from './chips';
 import type { ThreadAction } from '@/hooks/use-thread-actions';
 import type { Business, Tag, ThreadItem } from '@/lib/trpc';
@@ -38,6 +39,7 @@ function NormalRow({ thread, selected, focused, checked, showAccount, tagById, b
   const visibleTags = tags.slice(0, 2);
 
   return (
+    <ThreadMenu thread={thread} onAction={onAction} onToggleExpand={onToggleExpand} expanded={expanded}>
     <div className="px-1.5 py-[1px]" data-thread-id={thread.id}>
       <div
         role="button"
@@ -113,6 +115,8 @@ function NormalRow({ thread, selected, focused, checked, showAccount, tagById, b
             { action: thread.mailbox === 'archive' || thread.mailbox === 'all' ? null : ('archive' as const), icon: Archive, label: t('Archiver (E)') },
             { action: thread.unread ? ('read' as const) : ('unread' as const), icon: MailOpen, label: thread.unread ? t('Marquer comme lu') : t('Marquer comme non lu') },
             { action: thread.starred ? ('unstar' as const) : ('star' as const), icon: Star, label: t('Ajouter aux favoris (S)') },
+            // The flag: spam in one click (and the AI learns from it), or back to the inbox from spam.
+            { action: thread.spam || thread.mailbox === 'junk' ? ('notSpam' as const) : ('spam' as const), icon: Flag, label: thread.spam || thread.mailbox === 'junk' ? t('Ce n’est pas un spam') : t('Spam (!)') },
             { action: thread.mailbox === 'trash' ? ('deleteForever' as const) : ('trash' as const), icon: Trash2, label: t('Supprimer (#)') },
           ]
             .filter((b) => b.action)
@@ -125,14 +129,15 @@ function NormalRow({ thread, selected, focused, checked, showAccount, tagById, b
                   e.stopPropagation();
                   onAction(action!, thread.id);
                 }}
-                className={cn('text-muted-foreground hover:text-foreground flex size-7 items-center justify-center rounded-md hover:bg-accent', action === 'trash' && 'hover:text-destructive')}
+                className={cn('text-muted-foreground hover:text-foreground flex size-7 items-center justify-center rounded-md hover:bg-accent', (action === 'trash' || action === 'spam') && 'hover:text-destructive')}
               >
-                <Icon className={cn('size-3.5', action === 'unstar' && 'fill-warning text-warning')} />
+                <Icon className={cn('size-3.5', action === 'unstar' && 'fill-warning text-warning', action === 'notSpam' && 'fill-destructive/20 text-destructive')} />
               </button>
             ))}
         </div>
       </div>
     </div>
+    </ThreadMenu>
   );
 }
 
@@ -163,6 +168,7 @@ function FoldToggle({ thread, expanded, onToggle }: { thread: ThreadItem; expand
 function CompactRow({ thread, selected, focused, checked, showAccount, tagById, onOpen, onToggleCheck, onAction, expanded = false, onToggleExpand }: Props) {
   const tag = thread.tags.map((id) => tagById.get(id)).find((t): t is Tag => Boolean(t) && t!.id !== 'important');
   return (
+    <ThreadMenu thread={thread} onAction={onAction} onToggleExpand={onToggleExpand} expanded={expanded}>
     <div className="px-1.5" data-thread-id={thread.id}>
       <div
         role="button"
@@ -230,6 +236,7 @@ function CompactRow({ thread, selected, focused, checked, showAccount, tagById, 
             [
               thread.mailbox === 'archive' || thread.mailbox === 'all' ? null : (['archive', Archive, t('Archiver (E)')] as const),
               [thread.unread ? 'read' : 'unread', MailOpen, thread.unread ? t('Marquer comme lu') : t('Marquer comme non lu')] as const,
+              [thread.spam || thread.mailbox === 'junk' ? 'notSpam' : 'spam', Flag, thread.spam || thread.mailbox === 'junk' ? t('Ce n’est pas un spam') : t('Spam (!)')] as const,
               [thread.mailbox === 'trash' ? 'deleteForever' : 'trash', Trash2, t('Supprimer (#)')] as const,
             ].filter(Boolean) as [ThreadAction, typeof Archive, string][]
           ).map(([action, Icon, label]) => (
@@ -238,7 +245,7 @@ function CompactRow({ thread, selected, focused, checked, showAccount, tagById, 
               type="button"
               title={label}
               onClick={(e) => (e.stopPropagation(), onAction(action, thread.id))}
-              className={cn('text-muted-foreground hover:text-foreground hover:bg-accent flex size-6 items-center justify-center rounded', action === 'trash' && 'hover:text-destructive')}
+              className={cn('text-muted-foreground hover:text-foreground hover:bg-accent flex size-6 items-center justify-center rounded', (action === 'trash' || action === 'spam') && 'hover:text-destructive')}
             >
               <Icon className="size-3.5" />
             </button>
@@ -246,5 +253,6 @@ function CompactRow({ thread, selected, focused, checked, showAccount, tagById, 
         </div>
       </div>
     </div>
+    </ThreadMenu>
   );
 }

@@ -55,6 +55,8 @@ export type ThreadListItem = {
   accountId: string;
   accountEmail: string;
   accountColor: string;
+  /** The space the conversation is in (mail/spaces.ts). */
+  spaceId: string;
   subject: string;
   snippet: string;
   summary: string;

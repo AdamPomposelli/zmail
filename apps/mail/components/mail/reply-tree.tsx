@@ -1,3 +1,4 @@
+import { useEffect } from 'react';
 import { CornerUpLeft, Paperclip, Star } from 'lucide-react';
 import type { Outputs } from '@/lib/trpc';
 import { cn, displayName, formatFullDate, formatListDate } from '@/lib/utils';
@@ -23,10 +24,15 @@ export function ReplyTree({ nodes, activeId, onSelect, className }: { nodes: Rep
   );
 }
 
+const linked = (messageId: string, on: boolean) =>
+  document.querySelector(`article[data-message-id="${CSS.escape(messageId)}"]`)?.toggleAttribute('data-linked', on);
+
 function ReplyTreeRow({ node, hasReplies, active, onSelect }: { node: ReplyNode; hasReplies: boolean; active: boolean; onSelect: () => void }) {
   const depth = Math.min(node.depth, MAX_LEVELS);
   // Deep chains: keep the innermost guides, the outer ones scroll off to the left.
   const guides = node.guides.slice(Math.max(0, node.guides.length - (depth - 1)));
+  // A tree folded away while pointed at must not leave its message lit.
+  useEffect(() => () => void linked(node.id, false), [node.id]);
 
   return (
     <div
@@ -35,6 +41,9 @@ function ReplyTreeRow({ node, hasReplies, active, onSelect }: { node: ReplyNode;
       aria-selected={active}
       tabIndex={-1}
       onClick={(e) => (e.stopPropagation(), onSelect())}
+      // Pointing at a reply lights up its message below, so the two are matched at a glance.
+      onMouseEnter={() => linked(node.id, true)}
+      onMouseLeave={() => linked(node.id, false)}
       title={`${displayName(node.from)} · ${formatFullDate(node.date)}`}
       className={cn('group/reply flex h-8 cursor-default items-center gap-2 rounded-md pr-2.5 pl-1.5 text-[12.5px] transition-colors', active ? 'bg-muted' : 'hover:bg-muted/60')}
     >

@@ -62,6 +62,10 @@ describe('subscriptions', () => {
 
   it('counts the mails still kept, and deletes all of one sender on one mailbox only', async () => {
     expect(engine.subscriptions.list().find((r) => r.accountId === 'work')!.kept).toBe(2);
+    // The preview lists exactly those mails, once each, newest first.
+    const preview = engine.subscriptions.senderMails('work', 'news@devpulse.test');
+    expect(preview.map((m) => m.subject)).toEqual(['Digest w1', 'Digest w2']);
+    expect(engine.subscriptions.senderMails('perso', 'news@devpulse.test')).toHaveLength(1);
     let trashed: string[] = [];
     // No IMAP server here: record the conversations instead of moving them.
     (engine.actions as unknown as { trash: (ids: string[]) => Promise<void> }).trash = async (ids) => void (trashed = ids);

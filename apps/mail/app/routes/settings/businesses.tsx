@@ -7,7 +7,8 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Textarea } from '@/components/ui/textarea';
-import { Card, ColorPicker, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
+import { Card, ColorPicker, GhostButton, PrimaryButton } from '@/components/settings/ui';
+import { Navigate } from 'react-router';
 import { useCatalog } from '@/hooks/use-catalog';
 import { useTRPC, type Business } from '@/lib/trpc';
 import { useSuggestBusinessPack } from '@/components/category-packs';
@@ -24,7 +25,16 @@ const MATCHER_LABELS: Record<Matcher['type'], string> = {
   sender: t('Expéditeur'),
 };
 
+/** The old page: business now lives at the bottom of Settings → Accounts. */
 export default function BusinessSettings() {
+  return <Navigate to="/settings/accounts#business" replace />;
+}
+
+/**
+ * Settings → Accounts, at the bottom: the businesses mail is grouped by, and how each mail is
+ * matched to one (receiving account, address, domain, sender).
+ */
+export function BusinessesSection() {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
   const catalog = useCatalog();
@@ -49,10 +59,12 @@ export default function BusinessSettings() {
   const remove = useMutation(trpc.catalog.removeBusiness.mutationOptions({ onSuccess: invalidate }));
 
   return (
-    <SettingsPage
+    <>
+    <Card
+      id="business"
       title={t('Business')}
-      description={t('Regroupez vos boîtes par activité. Chaque mail est rattaché à un business selon sa provenance : compte, adresse ou domaine de destination, expéditeur.')}
-      actions={
+      description={t('Regroupez vos boîtes par activité. Chaque mail est rattaché à un business selon sa provenance : compte, adresse ou domaine de destination, expéditeur. Un compte sans business est personnel.')}
+      action={
         <PrimaryButton onClick={() => setDraft({ name: '', emoji: '🏢', color: PALETTE[catalog.businesses.length % PALETTE.length]!, description: '', matchers: [] })}>
           <Plus className="size-4" />
           {t('Nouveau business')}
@@ -60,16 +72,26 @@ export default function BusinessSettings() {
       }
     >
       {catalog.businesses.length === 0 ? (
-        <Card>
-          <p className="text-muted-foreground py-6 text-center text-[13px]">{t('Créez votre premier business (ex. votre agence, votre boutique, « Perso »).')}</p>
-        </Card>
+        <p className="text-muted-foreground py-2 text-[13px]">{t('Aucun business : tous vos comptes sont personnels. Créez-en un pour une agence, une boutique, un client…')}</p>
       ) : (
-        catalog.businesses.map((b) => (
-          <Card
-            key={b.id}
-            title={`${b.emoji ?? ''} ${b.name}`.trim()}
-            description={b.description || undefined}
-            action={
+        <ul className="-my-1 divide-y divide-border">
+          {catalog.businesses.map((b) => (
+            <li key={b.id} className="flex items-start gap-3 py-3">
+              <span className="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-lg text-[14px]" style={{ backgroundColor: `${b.color}22` }}>
+                {b.emoji || <span className="size-2.5 rounded-full" style={{ backgroundColor: b.color }} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-[13.5px] font-medium">{b.name}</p>
+                {b.description ? <p className="text-muted-foreground text-[12px]">{b.description}</p> : null}
+                <div className="mt-1.5 flex flex-wrap gap-1.5">
+                  {b.matchers.length === 0 ? <span className="text-muted-foreground text-[12px]">{t('Aucune règle de rattachement')}</span> : null}
+                  {b.matchers.map((m) => (
+                    <span key={m.id} className="bg-muted rounded-md px-2 py-0.5 text-[12px]">
+                      <span className="text-muted-foreground">{t('{label} :', { label: MATCHER_LABELS[m.type] })}</span> {m.type === 'account' ? (catalog.accountById.get(m.value)?.email ?? m.value) : m.value}
+                    </span>
+                  ))}
+                </div>
+              </div>
               <div className="flex gap-1.5">
                 <GhostButton onClick={() => setDraft({ id: b.id, name: b.name, emoji: b.emoji ?? '', color: b.color, description: b.description, matchers: b.matchers.map(({ type, value }) => ({ type, value })) })}>{t('Modifier')}</GhostButton>
                 <GhostButton
@@ -79,20 +101,11 @@ export default function BusinessSettings() {
                   <Trash2 className="size-3.5" />
                 </GhostButton>
               </div>
-            }
-          >
-            <div className="flex flex-wrap gap-1.5">
-              <span className="size-3 rounded-full" style={{ backgroundColor: b.color }} />
-              {b.matchers.length === 0 ? <span className="text-muted-foreground text-[12.5px]">{t('Aucune règle de rattachement')}</span> : null}
-              {b.matchers.map((m) => (
-                <span key={m.id} className="bg-muted rounded-md px-2 py-0.5 text-[12px]">
-                  <span className="text-muted-foreground">{t('{label} :', { label: MATCHER_LABELS[m.type] })}</span> {m.type === 'account' ? (catalog.accountById.get(m.value)?.email ?? m.value) : m.value}
-                </span>
-              ))}
-            </div>
-          </Card>
-        ))
+            </li>
+          ))}
+        </ul>
       )}
+    </Card>
 
       <Dialog open={draft !== null} onOpenChange={(open) => !open && setDraft(null)}>
         <DialogContent showOverlay className="max-w-[540px]">
@@ -182,6 +195,6 @@ export default function BusinessSettings() {
           ) : null}
         </DialogContent>
       </Dialog>
-    </SettingsPage>
+    </>
   );
 }

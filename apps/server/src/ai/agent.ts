@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import type { EngineContext } from '../context';
+import type { Analytics, Habit } from '../rules/behavior';
 import type { ThreadListItem } from '../types';
 import { ActionSchema, ConditionSchema, describeAction } from '../rules/engine';
 import { buildChatRequest } from './prompts';
@@ -37,16 +38,19 @@ export const ToolCall = z.discriminatedUnion('tool', [
   z.object({ tool: z.literal('triage_report'), args: z.object({}).passthrough().optional() }),
   z.object({ tool: z.literal('improve_triage'), args: z.object({ goal: z.string().optional() }).passthrough().optional() }),
   z.object({ tool: z.literal('apply_triage_draft'), args: z.object({}).passthrough().optional() }),
+  z.object({ tool: z.literal('behavior_report'), args: z.object({ days: z.number().optional() }).passthrough().optional() }),
 ]);
 type ToolCall = z.infer<typeof ToolCall>;
 
 const PALETTE = ['#F43F5E', '#3B82F6', '#10B981', '#F59E0B', '#8B5CF6', '#06B6D4', '#EC4899', '#84CC16'];
 
+export type ChatContext = { threadIds: string[]; tagIds: string[]; senders: string[]; accountIds: string[] };
+
 export class MailAgent {
   constructor(private readonly ctx: EngineContext) {}
 
-  async chat(message: string, history: ChatTurn[]): Promise<AgentReply> {
-    const plan = await this.plan(message, history);
+  async chat(message: string, history: ChatTurn[], context?: ChatContext): Promise<AgentReply> {
+    const plan = await this.plan(this.withContext(message, context), history);
     const steps: AgentStep[] = [];
     const threads: ThreadListItem[] = [];
     for (const call of plan.actions) {
@@ -61,6 +65,32 @@ export class MailAgent {
     // Without a written reply, the step cards already say what happened.
     const reply = plan.reply || (steps.length ? '' : this.help());
     return { reply, steps, threads: dedupe(threads).slice(0, 10), engine: plan.engine };
+  }
+
+  /**
+   * What the user mentioned (@mail, #category, a sender, an account), written out for the model
+   * with the ids its tools take, so « résume ce mail » or « archive tout ça » acts on exactly those.
+   */
+  private withContext(message: string, context?: ChatContext) {
+    if (!context) return message;
+    const lines: string[] = [];
+    for (const id of context.threadIds) {
+      const m = this.ctx.db.get<{ subject: string; from_name: string | null; from_email: string; summary: string | null; date: number }>(
+        `SELECT m.subject, m.from_name, m.from_email, t.summary, m.date FROM messages m LEFT JOIN triage t ON t.message_id = m.id WHERE m.thread_id = ? ORDER BY m.date DESC LIMIT 1`,
+        id,
+      );
+      if (m) lines.push(`- mail thread ${id} : « ${m.subject} » de ${m.from_name || m.from_email} <${m.from_email}>, ${new Date(m.date).toISOString().slice(0, 10)}${m.summary ? ` — ${m.summary}` : ''}`);
+    }
+    for (const id of context.tagIds) {
+      const tag = this.ctx.catalog.tags().find((x) => x.id === id);
+      if (tag) lines.push(`- catégorie ${tag.id} (${tag.name})`);
+    }
+    for (const email of context.senders) lines.push(`- expéditeur ${email}`);
+    for (const id of context.accountIds) {
+      const account = this.ctx.accounts.get(id);
+      if (account) lines.push(`- compte ${account.id} (${account.email})`);
+    }
+    return lines.length ? `${message}\n\nL’utilisateur a mentionné :\n${lines.join('\n')}` : message;
   }
 
   private async plan(message: string, history: ChatTurn[]): Promise<{ reply: string; actions: ToolCall[]; engine: string }> {
@@ -105,6 +135,7 @@ export class MailAgent {
     // Improving the sorting itself: report, propose, apply.
     if (/(applique|valide|garde).*(proposition|brouillon|version|prompt)/.test(lower)) return { reply: '', actions: [{ tool: 'apply_triage_draft', args: {} }] };
     if (/(am[ée]liore|optimise|corrige|r[ée]gle|it[èe]re).*(tri|classement|classification|prompt)/.test(lower)) return { reply: '', actions: [{ tool: 'improve_triage', args: { goal: text } }] };
+    if (/(habitudes?|comportements?|analyse.*(activit|actions?|journal)|que.*(fais|supprime|archive).*souvent)/.test(lower)) return { reply: '', actions: [{ tool: 'behavior_report', args: {} }] };
     if (/(erreurs?|incoh[ée]rences?|bugs?|probl[èe]mes?).*(tri|classement|classification)|(tri|classement).*(erreurs?|incoh[ée]rences?)/.test(lower)) return { reply: '', actions: [{ tool: 'triage_report', args: {} }] };
     const tag = text.match(/(?:cr[ée]e|ajoute|nouveau|nouvelle)\s+(?:un\s+|une\s+)?(?:tag|cat[ée]gorie)\s+[«"']?([^»"',.]+)[»"']?(?:\s+pour\s+(.+))?/i);
     if (tag) return { reply: '', actions: [{ tool: 'create_tag', args: { name: tag[1]!.trim(), description: tag[2]?.trim() ?? '' } }] };
@@ -211,6 +242,8 @@ export class MailAgent {
             }), ...lines, t('Dites « améliore le tri » pour que je propose et mesure une meilleure version.')].join('\n'),
         };
       }
+      case 'behavior_report':
+        return { summary: behaviorSummary(this.ctx.behavior.analyze({ days: call.args?.days ?? 90 })) };
       case 'improve_triage': {
         const result = await this.ctx.lab.improve({ goal: call.args?.goal, by: 'agent' });
         if (!result.draft) return { summary: result.message };
@@ -248,8 +281,67 @@ export class MailAgent {
   }
 }
 
-/** « typesafe/jev-1.13 » → « Jev 1.13 », « heuristic » → « moteur local ». */
+/** « typesafe/jev-1.13 » → « Jev 1.13 », « heuristic » → « règles ZMail ». */
 const engineName = (engine: string) =>
-  engine === 'heuristic' ? t('moteur local') : engine === 'apple' ? 'Apple Intelligence' : engine.startsWith('typesafe/') ? `Jev ${engine.replace(/^typesafe\/jev-/, '')}` : engine.replace(/^[^/]+\//, '');
+  engine === 'heuristic' ? t('règles ZMail') : engine === 'apple' ? 'Apple Intelligence' : engine.startsWith('typesafe/') ? `Jev ${engine.replace(/^typesafe\/jev-/, '')}` : engine.replace(/^[^/]+\//, '');
 
 const dedupe = (threads: ThreadListItem[]) => [...new Map(threads.map((t) => [t.id, t])).values()];
+
+const pct = (share: number) => `${Math.round(share * 100)} %`;
+
+/** The analysis in a few lines: the overview, then the strongest habits and what to do with them. */
+function behaviorSummary(a: Analytics) {
+  const o = a.overview;
+  if (!o.threads) return t('Pas encore assez d’activité à analyser.');
+  const lines = [
+    t('Sur {days} jours, {n} conversations : {opened} ouvertes, {archived} archivées, {trashed} supprimées, {filed} rangées dans un dossier, {untouched} laissées telles quelles.', {
+      days: a.days,
+      n: o.threads,
+      opened: pct(o.openedShare),
+      archived: pct(o.shares.archive),
+      trashed: pct(o.shares.trash + o.shares.spam),
+      filed: pct(o.shares.folder),
+      untouched: pct(o.shares.untouched),
+    }),
+  ];
+  if (o.deletedUnopenedShare !== null) lines.push(t('{share} des mails supprimés l’ont été sans être ouverts.', { share: pct(o.deletedUnopenedShare) }));
+  const habits = a.habits.filter((h) => !h.covered).slice(0, 8);
+  if (!habits.length) lines.push(t('Aucune habitude assez nette (70 % d’un même type de mail, sur au moins 3 mails) pour l’instant.'));
+  else {
+    lines.push(t('Habitudes nettes :'));
+    for (const h of habits)
+      lines.push(
+        t('• {label} : {what} {share} ({support}/{total}){safety}', {
+          label: h.dimension === 'domain' ? `@${h.key}` : h.label,
+          what: outcomeLabel(h.outcome, h.targetLabel),
+          share: pct(h.share),
+          support: h.support,
+          total: h.total,
+          safety: h.safe ? '' : ` — ${h.reason}`,
+        }),
+      );
+    lines.push(t('Dites « crée la règle pour … » et je l’ajoute.'));
+  }
+  return lines.join('\n');
+}
+
+function outcomeLabel(outcome: Habit['outcome'], target: string | null) {
+  switch (outcome) {
+    case 'archive':
+      return t('archivés');
+    case 'trash':
+      return t('supprimés');
+    case 'spam':
+      return t('mis en spam');
+    case 'folder':
+      return t('rangés dans « {folder} »', { folder: target ?? '' });
+    case 'space':
+      return t('déplacés vers l’espace « {space} »', { space: target ?? '' });
+    case 'markRead':
+      return t('marqués comme lus sans être ouverts');
+    case 'neverOpened':
+      return t('jamais ouverts');
+    default:
+      return outcome;
+  }
+}

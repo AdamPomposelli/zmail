@@ -1,6 +1,7 @@
 import { initTRPC, TRPCError } from '@trpc/server';
 import { messageDetails, messageSource } from '../mail/details';
 import { PRESET_IDS, PRESET_MEASURES } from '../ai/presets';
+import { isIconValue } from '../lib/icons';
 import superjson from 'superjson';
 import { z } from 'zod';
 import type { EngineContext } from '../context';
@@ -52,11 +53,38 @@ const accountFields = z.object({
   password: z.string().min(1),
   color: z.string().optional(),
   businessId: z.string().nullable().optional(),
+  kind: z.enum(['business', 'personal']).nullable().optional(),
   aliases: z.array(z.string()).optional(),
   syncDays: z.number().int().min(1).max(3650).optional(),
 });
 
+/** The account worker that owns a folder. */
+const workerOfMailbox = (engine: EngineContext, mailboxId: string) => {
+  const box = engine.db.get<{ account_id: string }>('SELECT account_id FROM mailboxes WHERE id = ?', mailboxId);
+  if (!box) throw new TRPCError({ code: 'NOT_FOUND', message: t('Dossier introuvable') });
+  return engine.accounts.worker(box.account_id);
+};
+
 const accountsRouter = router({
+  /** Sidebar group (drag & drop): personal also unlinks the account from its business. */
+  setKind: procedure.input(z.object({ id: z.string(), kind: z.enum(['business', 'personal']).nullable() })).mutation(({ ctx, input }) => {
+    ctx.engine.accounts.setKind(input.id, input.kind);
+    if (input.kind === 'personal' && ctx.engine.accounts.get(input.id)?.businessId) {
+      ctx.engine.catalog.setAccountBusiness(input.id, null);
+      ctx.engine.spaces.syncBusinesses([input.id]);
+    }
+  }),
+  setIcon: procedure.input(z.object({ id: z.string(), icon: z.string().max(400_000).nullable() })).mutation(({ ctx, input }) => ctx.engine.accounts.setIcon(input.id, input.icon)),
+  siteLogo: procedure.input(z.object({ domain: z.string().max(253) })).mutation(({ ctx, input }) => ctx.engine.accounts.siteLogo(input.domain)),
+  /** « Se connecter avec Microsoft » (Outlook.com, Hotmail, Microsoft 365: passwords are refused). */
+  microsoftClientId: procedure.query(({ ctx }) => ctx.engine.oauth.clientId()),
+  setMicrosoftClientId: procedure.input(z.object({ clientId: z.string().trim().regex(/^[0-9a-f-]{36}$/i, 'ID d’application invalide (format 00000000-0000-0000-0000-000000000000)') })).mutation(({ ctx, input }) => ctx.engine.oauth.setClientId(input.clientId)),
+  checkMicrosoftClientId: procedure.input(z.object({ clientId: z.string().trim().regex(/^[0-9a-f-]{36}$/i) })).mutation(({ ctx, input }) => ctx.engine.oauth.checkClientId(input.clientId)),
+  /** Back to ZMail's own app ID. */
+  resetMicrosoftClientId: procedure.mutation(({ ctx }) => ctx.engine.oauth.setClientId(null)),
+  microsoftStart: procedure.input(z.object({ email: z.string().optional() })).mutation(({ ctx, input }) => ctx.engine.oauth.start(input.email)),
+  microsoftStatus: procedure.input(z.object({ state: z.string() })).query(({ ctx, input }) => ctx.engine.oauth.status(input.state)),
+  progress: procedure.query(({ ctx }) => ctx.engine.accounts.progress()),
   list: procedure.query(({ ctx }) => ctx.engine.accounts.list().map(publicAccount)),
   presets: procedure.query(() => PRESETS),
   detect: procedure.input(z.object({ email: z.string() })).query(({ input }) => detectPreset(input.email)),
@@ -73,7 +101,15 @@ const accountsRouter = router({
     .mutation(async ({ ctx, input }) => {
       const patch = { ...input.patch };
       if (!patch.password) delete patch.password;
-      return publicAccount(await ctx.engine.accounts.update(input.id, patch));
+      const account = publicAccount(await ctx.engine.accounts.update(input.id, patch));
+      // The account's business, as chosen in its settings, decides for its mail (« Personnel » = none).
+      if (input.patch.businessId !== undefined) {
+        ctx.engine.catalog.setAccountBusiness(input.id, input.patch.businessId);
+        ctx.engine.spaces.syncBusinesses([input.id]);
+        // Linked to a business: under « Business » in the sidebar; « Personnel » otherwise.
+        ctx.engine.accounts.setKind(input.id, input.patch.businessId ? 'business' : 'personal');
+      }
+      return account;
     }),
   remove: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.accounts.remove(input.id)),
   resync: procedure.input(z.object({ id: z.string().optional() })).mutation(({ ctx, input }) => ctx.engine.accounts.resync(input.id)),
@@ -87,6 +123,38 @@ const accountsRouter = router({
       .map((m) => ({ id: m.id, accountId: m.account_id, path: m.path, name: m.name, specialUse: m.special_use, delimiter: m.delimiter })),
   ),
   syncFolder: procedure.input(z.object({ accountId: z.string(), mailboxId: z.string() })).mutation(({ ctx, input }) => ctx.engine.accounts.worker(input.accountId).syncFolder(input.mailboxId)),
+  /** Moves a folder under another one (or to the top level), on the server too. */
+  /** Folder management, mirrored on the server: move, rename, create, delete, mark all read. */
+  moveFolder: procedure
+    .input(z.object({ mailboxId: z.string(), parentId: z.string().nullable() }))
+    .mutation(({ ctx, input }) => workerOfMailbox(ctx.engine, input.mailboxId).moveFolder(input.mailboxId, input.parentId)),
+  renameFolder: procedure
+    .input(z.object({ mailboxId: z.string(), name: z.string().min(1).max(200) }))
+    .mutation(({ ctx, input }) => workerOfMailbox(ctx.engine, input.mailboxId).renameFolder(input.mailboxId, input.name)),
+  createFolder: procedure
+    .input(z.object({ accountId: z.string(), parentId: z.string().nullable(), name: z.string().min(1).max(200) }))
+    .mutation(({ ctx, input }) => ctx.engine.accounts.worker(input.accountId).createFolder(input.parentId, input.name)),
+  deleteFolder: procedure
+    .input(z.object({ mailboxId: z.string(), toTrash: z.boolean().default(true) }))
+    .mutation(({ ctx, input }) => workerOfMailbox(ctx.engine, input.mailboxId).deleteFolder(input.mailboxId, { toTrash: input.toTrash })),
+  markFolderRead: procedure.input(z.object({ mailboxId: z.string() })).mutation(({ ctx, input }) => workerOfMailbox(ctx.engine, input.mailboxId).markFolderRead(input.mailboxId)),
+  /** What deleting a folder would remove: the folder, its subfolders, the mails ZMail has of them. */
+  folderContents: procedure.input(z.object({ mailboxId: z.string() })).query(({ ctx, input }) => {
+    const box = ctx.engine.db.get<{ path: string; delimiter: string | null; account_id: string }>('SELECT path, delimiter, account_id FROM mailboxes WHERE id = ?', input.mailboxId);
+    if (!box) throw new TRPCError({ code: 'NOT_FOUND', message: t('Dossier introuvable') });
+    const prefix = `${box.path}${box.delimiter ?? '/'}`;
+    const ids = ctx.engine.db
+      .all<{ id: string; path: string }>('SELECT id, path FROM mailboxes WHERE account_id = ?', box.account_id)
+      .filter((m) => m.path === box.path || m.path.startsWith(prefix))
+      .map((m) => m.id);
+    const mails = ctx.engine.db.get<{ n: number }>(`SELECT COUNT(*) AS n FROM messages WHERE mailbox_id IN (${ids.map(() => '?').join(',')})`, ...ids)?.n ?? 0;
+    return { subfolders: ids.length - 1, mails };
+  }),
+  loadOlder: procedure.input(z.object({ mailboxId: z.string() })).mutation(({ ctx, input }) => {
+    const box = ctx.engine.db.get<{ account_id: string }>('SELECT account_id FROM mailboxes WHERE id = ?', input.mailboxId);
+    if (!box) throw new TRPCError({ code: 'NOT_FOUND', message: 'Dossier introuvable' });
+    return ctx.engine.accounts.worker(box.account_id).loadOlder(input.mailboxId);
+  }),
 });
 
 const mailRouter = router({
@@ -98,6 +166,7 @@ const mailRouter = router({
         tagId: z.string().nullish(),
         accountId: z.string().nullish(),
         mailboxId: z.string().nullish(),
+        spaceId: z.string().nullish(),
         query: z.string().nullish(),
         sort: z.enum(['smart', 'date']).default('smart'),
         cursor: z.number().nullish(),
@@ -108,17 +177,20 @@ const mailRouter = router({
       const page = ctx.engine.store.listThreads({ ...input, offset: input.cursor ?? 0 });
       return { items: page.items, nextCursor: page.nextOffset };
     }),
-  counts: procedure.query(({ ctx }) => ctx.engine.store.counts()),
+  counts: procedure.input(z.object({ spaceId: z.string().nullish() }).optional()).query(({ ctx, input }) => ctx.engine.store.counts(input?.spaceId)),
+  senders: procedure.input(z.object({ query: z.string().max(200), limit: z.number().min(1).max(20).default(6) })).query(({ ctx, input }) => (input.query.trim() ? ctx.engine.store.senders(input.query, input.limit) : [])),
   thread: procedure.input(z.object({ id: z.string() })).query(({ ctx, input }) => {
     const thread = ctx.engine.store.getThread(input.id);
     if (!thread) throw new TRPCError({ code: 'NOT_FOUND', message: t('Conversation introuvable') });
-    return thread;
+    return { ...thread, spaceId: ctx.engine.spaces.spaceOf(input.id) };
   }),
+  moveToSpace: procedure.input(threadIds.extend({ spaceId: z.string() })).mutation(({ ctx, input }) => ctx.engine.actions.moveToSpace(input.threadIds, input.spaceId)),
   replyTree: procedure.input(z.object({ id: z.string() })).query(({ ctx, input }) => ctx.engine.store.replyTree(input.id)),
   open: procedure.input(z.object({ threadId: z.string() })).mutation(({ ctx, input }) => ctx.engine.actions.open(input.threadId)),
   markRead: procedure.input(threadIds.extend({ read: z.boolean() })).mutation(({ ctx, input }) => ctx.engine.actions.markRead(input.threadIds, input.read)),
   star: procedure.input(threadIds.extend({ on: z.boolean() })).mutation(({ ctx, input }) => ctx.engine.actions.star(input.threadIds, input.on)),
   archive: procedure.input(threadIds).mutation(({ ctx, input }) => ctx.engine.actions.archive(input.threadIds)),
+  moveToFolder: procedure.input(threadIds.extend({ mailboxId: z.string() })).mutation(({ ctx, input }) => ctx.engine.actions.moveToFolder(input.threadIds, input.mailboxId)),
   trash: procedure.input(threadIds).mutation(({ ctx, input }) => ctx.engine.actions.trash(input.threadIds)),
   restore: procedure.input(threadIds).mutation(({ ctx, input }) => ctx.engine.actions.restore(input.threadIds)),
   spam: procedure.input(threadIds).mutation(({ ctx, input }) => ctx.engine.actions.spam(input.threadIds)),
@@ -135,7 +207,7 @@ const mailRouter = router({
     return ctx.engine.store.getThread(input.threadIds[0]!);
   }),
   unsubscribe: procedure.input(z.object({ threadId: z.string() })).mutation(({ ctx, input }) => ctx.engine.subscriptions.unsubscribe(input.threadId)),
-  subscriptions: procedure.query(({ ctx }) => ctx.engine.subscriptions.list()),
+  subscriptions: procedure.input(z.object({ spaceId: z.string().nullish() }).optional()).query(({ ctx, input }) => ctx.engine.subscriptions.list(input?.spaceId)),
   details: procedure.input(z.object({ id: z.string() })).query(({ ctx, input }) => messageDetails(ctx.engine, input.id)),
   source: procedure.input(z.object({ id: z.string() })).query(async ({ ctx, input }) => {
     const raw = await messageSource(ctx.engine, input.id);
@@ -144,6 +216,9 @@ const mailRouter = router({
   }),
   archiveMessage: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.actions.archiveMessage(input.id)),
   trashMessage: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.actions.trashMessage(input.id)),
+  senderMails: procedure
+    .input(z.object({ senders: z.array(z.object({ accountId: z.string(), fromEmail: z.string() })).max(50) }))
+    .query(({ ctx, input }) => input.senders.map((s) => ({ ...s, mails: ctx.engine.subscriptions.senderMails(s.accountId, s.fromEmail) }))),
   trashFromSender: procedure
     .input(z.object({ accountId: z.string(), fromEmail: z.string() }))
     .mutation(({ ctx, input }) => ctx.engine.subscriptions.trashFromSender(input.accountId, input.fromEmail)),
@@ -179,28 +254,12 @@ const catalogRouter = router({
   saveBusiness: procedure.input(businessInput).mutation(({ ctx, input }) => ctx.engine.catalog.saveBusiness(input)),
   removeBusiness: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.catalog.removeBusiness(input.id)),
   /** Re-runs business assignment on stored mail after matchers changed. */
-  reassignBusinesses: procedure.mutation(({ ctx }) => {
-    const rows = ctx.engine.db.all<{ id: string; account_id: string; from_email: string; to_json: string; cc_json: string; delivered_to: string | null }>(
-      'SELECT m.id, m.account_id, m.from_email, m.to_json, m.cc_json, m.delivered_to FROM messages m JOIN triage t ON t.message_id = m.id WHERE t.user_override = 0',
-    );
-    ctx.engine.db.tx(() => {
-      for (const row of rows) {
-        const businessId = ctx.engine.catalog.resolveBusiness({
-          accountId: row.account_id,
-          from: { email: row.from_email },
-          to: JSON.parse(row.to_json),
-          cc: JSON.parse(row.cc_json),
-          deliveredTo: row.delivered_to,
-        });
-        ctx.engine.db.run('UPDATE triage SET business_id = ? WHERE message_id = ?', businessId, row.id);
-      }
-    });
-    return rows.length;
-  }),
+  reassignBusinesses: procedure.mutation(({ ctx }) => ctx.engine.catalog.reassignBusinesses()),
   tags: procedure.query(({ ctx }) => ctx.engine.catalog.tags()),
   saveTag: procedure
-    .input(z.object({ id: z.string().optional(), name: z.string().min(1), color: z.string(), description: z.string().default(''), icon: z.string().nullish() }))
+    .input(z.object({ id: z.string().optional(), name: z.string().min(1), color: z.string(), description: z.string().default(''), icon: z.string().refine((v) => isIconValue(v), 'Icône invalide').nullish(), spaceId: z.string().nullish(), hideFromInbox: z.boolean().optional() }))
     .mutation(({ ctx, input }) => ctx.engine.catalog.saveTag(input)),
+  setHideFromInbox: procedure.input(z.object({ id: z.string(), hide: z.boolean() })).mutation(({ ctx, input }) => ctx.engine.catalog.setHideFromInbox(input.id, input.hide)),
   removeTag: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.catalog.removeTag(input.id)),
   hiddenTags: procedure.query(({ ctx }) => ctx.engine.catalog.hiddenTags()),
   restoreTag: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.catalog.restoreTag(input.id)),
@@ -221,6 +280,7 @@ const rulesRouter = router({
     return ctx.engine.pipeline.applyRuleToExisting(rule);
   }),
   suggestions: procedure.query(({ ctx }) => ctx.engine.patterns.pending()),
+  suggestionSamples: procedure.input(z.object({ id: z.string() })).query(({ ctx, input }) => ctx.engine.patterns.samples(input.id)),
   allSuggestions: procedure.query(({ ctx }) => ctx.engine.patterns.all()),
   acceptSuggestion: procedure
     .input(z.object({ id: z.string(), applyToExisting: z.boolean().default(true), rule: RuleInputSchema.optional() }))
@@ -241,12 +301,29 @@ const rulesRouter = router({
 const activityRouter = router({
   list: procedure.input(z.object({ limit: z.number().default(100), offset: z.number().default(0) })).query(({ ctx, input }) => ctx.engine.patterns.history(input.limit, input.offset)),
   stats: procedure.query(({ ctx }) => ctx.engine.patterns.stats()),
+  /** The habits analysis: probability tables per sender, domain, list, category…, habits, graph. */
+  analytics: procedure
+    .input(z.object({ days: z.number().int().min(7).max(365).default(90), threshold: z.number().min(0.5).max(1).optional(), minSupport: z.number().int().min(2).max(50).optional() }))
+    .query(({ ctx, input }) => ctx.engine.behavior.analyze(input)),
+  /** Gestures only the app sees: reading time and depth, links, attachments, copied codes, searches. */
+  track: procedure
+    .input(
+      z.object({
+        action: z.enum(['view', 'openLink', 'downloadAttachment', 'copyOtp', 'search']),
+        threadId: z.string().nullish(),
+        ms: z.number().min(0).max(6 * 3600_000).optional(),
+        meta: z.record(z.union([z.string().max(500), z.number(), z.boolean(), z.null()])).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => void ctx.engine.actions.track(input)),
   unsubscribes: procedure.query(({ ctx }) => ctx.engine.subscriptions.history()),
 });
 
 const notificationsRouter = router({
   list: procedure.query(({ ctx }) => ctx.engine.notifier.list()),
   markAllRead: procedure.mutation(({ ctx }) => ctx.engine.notifier.markAllRead()),
+  /** macOS permission for ZMail's notifications: authorized, denied, notDetermined, or null outside the app. */
+  permission: procedure.query(async ({ ctx }) => (await ctx.engine.bridge.health())?.notifications ?? null),
   settings: procedure.query(({ ctx }) => ctx.engine.notifier.settings()),
   saveSettings: procedure
     .input(
@@ -355,11 +432,15 @@ const aiRouter = router({
       presets: await Promise.all(
         PRESET_IDS.map(async (id) => {
           const plan = await ai.plan('triage', id);
-          const measure = PRESET_MEASURES.presets[id] ?? null;
+          // No model left for sorting (e.g. the free model became paid): the local engine does it all,
+          // and the card shows that precision, not the measured mode's.
+          const localOnly = plan.candidates.length === 0 && !plan.consensus;
+          const measured = PRESET_MEASURES.presets[id] ?? null;
+          const measure = localOnly && measured ? { ...measured, score: PRESET_MEASURES.localTriageScore ?? measured.score, latencyP50: 50, costPer1k: 0 } : measured;
           const mailsPerDay = callsPerDay('triage', volume, forecastSettings);
           const paidService = connections.length > 0;
           // What the mode needs on this Mac, in plain words.
-          const missing = id === 'free' ? (!apple.available && !paidService ? t('Activez Apple Intelligence ou connectez ZenMux') : null) : !paidService ? t('Connectez ZenMux (une clé suffit)') : null;
+          const missing = id === 'free' ? (!apple.available && !paidService ? t('Connectez ZenMux pour trier avec ses modèles gratuits') : null) : !paidService ? t('Connectez ZenMux (une clé suffit)') : null;
           const names = (plan.consensus ? [...plan.consensus.pair, ...(plan.consensus.arbiter ? [plan.consensus.arbiter] : [])] : plan.candidates).map((c) =>
             c.providerId === 'apple' ? 'Apple Intelligence' : (options.find((o) => o.providerId === c.providerId && o.id === c.model)?.name ?? c.model).replace(/^[^:]{2,20}:\s*/, ''),
           );
@@ -372,6 +453,7 @@ const aiRouter = router({
             models: names,
             doubleCheck: Boolean(plan.consensus),
             missing,
+            localOnly,
           };
         }),
       ),
@@ -446,8 +528,17 @@ const aiRouter = router({
   setMailsPerDay: procedure.input(z.object({ value: z.number().min(0).max(100000).nullable() })).mutation(({ ctx, input }) => ctx.engine.db.setSetting('ai.mailsPerDay', input.value)),
   setChatPerDay: procedure.input(z.object({ value: z.number().min(0).max(1000) })).mutation(({ ctx, input }) => ctx.engine.db.setSetting('ai.chatPerDay', input.value)),
   chat: procedure
-    .input(z.object({ message: z.string().min(1), history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).default([]) }))
-    .mutation(({ ctx, input }) => ctx.engine.agent.chat(input.message, input.history)),
+    .input(
+      z.object({
+        message: z.string().min(1),
+        history: z.array(z.object({ role: z.enum(['user', 'assistant']), content: z.string() })).default([]),
+        // What the user mentioned (@mail, #category, a sender, an account): the agent works on those.
+        context: z
+          .object({ threadIds: z.array(z.string()).max(20).default([]), tagIds: z.array(z.string()).max(20).default([]), senders: z.array(z.string()).max(20).default([]), accountIds: z.array(z.string()).max(10).default([]) })
+          .optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => ctx.engine.agent.chat(input.message, input.history, input.context)),
   retriageAll: procedure.mutation(({ ctx }) => ctx.engine.pipeline.retriageAll()),
   retriageStatus: procedure.query(({ ctx }) => ctx.engine.pipeline.retriageStatus()),
   cancelRetriage: procedure.mutation(({ ctx }) => ctx.engine.pipeline.cancelRetriage()),
@@ -549,21 +640,44 @@ const developerRouter = router({
 
 const cleanupRouter = router({
   savings: procedure.query(({ ctx }) => ctx.engine.cleaner.savings()),
-  remaining: procedure.query(({ ctx }) => ctx.engine.cleaner.remaining()),
+  trackShortcut: procedure.mutation(({ ctx }) => ctx.engine.cleaner.trackShortcut()),
+  remaining: procedure.input(z.object({ spaceId: z.string().nullish() }).optional()).query(({ ctx, input }) => ctx.engine.cleaner.remaining(input?.spaceId)),
   run: procedure.input(z.object({ id: z.string() })).query(({ ctx, input }) => ctx.engine.cleaner.run(input.id)),
   latest: procedure.query(({ ctx }) => ctx.engine.cleaner.latest()),
-  recap: procedure.query(({ ctx }) => ctx.engine.cleaner.recap()),
+  recap: procedure.input(z.object({ spaceId: z.string().nullish() }).optional()).query(({ ctx, input }) => ctx.engine.cleaner.recap(input?.spaceId)),
   reply: procedure
     .input(z.object({ runId: z.string(), threadId: z.string(), action: z.enum(['send', 'rewrite', 'skip', 'archive']), text: z.string().max(20000).optional(), instruction: z.string().max(1000).optional() }))
     .mutation(({ ctx, input }) => ctx.engine.cleaner.reply(input)),
-  start: procedure.mutation(({ ctx }) => ctx.engine.cleaner.start()),
+  start: procedure.input(z.object({ notify: z.boolean().optional(), spaceId: z.string().nullish() }).optional()).mutation(({ ctx, input }) => ctx.engine.cleaner.start(input)),
   resolve: procedure
     .input(z.object({ runId: z.string(), threadId: z.string(), decision: z.enum(['archive', 'keep', 'trash']), remember: z.boolean().optional(), context: z.string().max(2000).optional() }))
     .mutation(({ ctx, input }) => ctx.engine.cleaner.resolve(input)),
   undo: procedure.input(z.object({ runId: z.string() })).mutation(({ ctx, input }) => ctx.engine.cleaner.undo(input.runId)),
 });
 
+/** Spaces (as in Arc): each has its own inbox, favourites, subscriptions and categories. */
+const spacesRouter = router({
+  list: procedure.query(({ ctx }) => ctx.engine.spaces.list()),
+  save: procedure
+    .input(
+      z.object({
+        id: z.string().optional(),
+        name: z.string().min(1).max(60),
+        icon: z.string().refine((v) => isIconValue(v), 'Icône invalide').nullish(),
+        color: z.string(),
+        accountIds: z.array(z.string()).optional(),
+        businessIds: z.array(z.string()).optional(),
+      }),
+    )
+    .mutation(({ ctx, input }) => ctx.engine.spaces.save(input)),
+  remove: procedure.input(z.object({ id: z.string() })).mutation(({ ctx, input }) => ctx.engine.spaces.remove(input.id)),
+  reorder: procedure.input(z.object({ ids: z.array(z.string()) })).mutation(({ ctx, input }) => ctx.engine.spaces.reorder(input.ids)),
+  createPerBusiness: procedure.mutation(({ ctx }) => ctx.engine.spaces.createPerBusiness()),
+  moveAccount: procedure.input(z.object({ accountId: z.string(), spaceId: z.string() })).mutation(({ ctx, input }) => ctx.engine.spaces.moveAccount(input.accountId, input.spaceId)),
+});
+
 export const appRouter = router({
+  spaces: spacesRouter,
   cleanup: cleanupRouter,
   developer: developerRouter,
   serverSync: serverSyncRouter,

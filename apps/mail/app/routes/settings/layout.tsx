@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 import { Outlet, useLocation } from 'react-router';
+import { highlight } from '@/lib/reveal';
 
 /** Scrolls to the card or row named in the URL hash (settings search) and briefly highlights it. */
 function useScrollToHash(scroller: React.RefObject<HTMLDivElement | null>) {
@@ -20,7 +21,7 @@ function useScrollToHash(scroller: React.RefObject<HTMLDivElement | null>) {
         return;
       }
       target.scrollIntoView({ behavior: 'smooth', block: 'start' });
-      target.animate([{ backgroundColor: 'rgba(0,111,254,0.14)', boxShadow: '0 0 0 4px rgba(0,111,254,0.14)' }, { backgroundColor: 'transparent', boxShadow: '0 0 0 4px transparent' }], { duration: 1800, delay: 250, easing: 'ease-out' });
+      highlight(target);
     };
     seek();
     return () => cancelAnimationFrame(frame);

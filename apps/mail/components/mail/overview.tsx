@@ -11,6 +11,7 @@ import { TagIcon } from '@/lib/tag-icons';
 import { formatDuration } from '@/lib/savings';
 import { ReplyCockpit } from '@/components/mail/reply-cockpit';
 import { useTRPC, type Outputs } from '@/lib/trpc';
+import { useSpaces } from '@/hooks/use-space';
 import { cn, formatListDate } from '@/lib/utils';
 import { intlLocale, num, t, tp } from '@/lib/i18n';
 
@@ -24,9 +25,10 @@ const Unsubscribe = solar('_unsubscribe');
 export function Overview() {
   const trpc = useTRPC();
   const catalog = useCatalog();
-  const { data: counts } = useQuery(trpc.mail.counts.queryOptions());
+  const { spaceId } = useSpaces();
+  const { data: counts } = useQuery(trpc.mail.counts.queryOptions({ spaceId }));
   const { data: savings } = useQuery(trpc.cleanup.savings.queryOptions());
-  const { data: left } = useQuery(trpc.cleanup.remaining.queryOptions());
+  const { data: left } = useQuery(trpc.cleanup.remaining.queryOptions({ spaceId }));
   const { data: latest } = useQuery(trpc.cleanup.latest.queryOptions());
   // The run shown in the cockpit: the one just started, or today's still open after a reload.
   const [closed, setClosed] = useState<string | null>(() => {
@@ -49,7 +51,9 @@ export function Overview() {
     }
     setRunId(null);
   };
-  const { data: notifications } = useQuery(trpc.notifications.list.queryOptions());
+  // The AI agent's own messages live behind the IA button (with a badge), not among the alerts.
+  const { data: allNotifications } = useQuery(trpc.notifications.list.queryOptions());
+  const notifications = allNotifications?.filter((n) => n.kind !== 'agent');
   const { data: status } = useQuery(trpc.ai.status.queryOptions());
   const hour = new Date().getHours();
   const greeting = hour < 6 ? t('Bonne nuit') : hour < 18 ? t('Bonjour') : t('Bonsoir');
@@ -146,6 +150,7 @@ function Kpis({ savings }: { savings: Savings }) {
     { n: savings.unsubscribed, label: t('désinscriptions'), tone: 'text-warning' },
     { n: savings.replied, label: t('réponses envoyées'), tone: 'text-ai' },
     { n: savings.tidied, label: t('rangés par l’IA'), tone: 'text-success' },
+    { n: savings.shortcuts, label: t('raccourcis ⌘K et @'), tone: 'text-primary' },
   ].filter((f, i) => i === 0 || f.n > 0);
   const minutes = Math.round(savings.seconds / 60);
   return (
@@ -161,7 +166,7 @@ function Kpis({ savings }: { savings: Savings }) {
       {minutes > 0 ? (
         <p className="text-muted-foreground mt-2 flex items-center gap-1 text-[11.5px]">
           {t('Environ {duration} de tri évitées', { duration: formatDuration(savings.seconds) })}
-          <InfoHint>{t('Estimation prudente : 4 s par mail trié, 8 s par spam, 20 s par code, 1 min 30 par désinscription et par réponse, 6 s par mail rangé.')}</InfoHint>
+          <InfoHint>{t('Estimation prudente : 4 s par mail trié, 8 s par spam, 20 s par code, 1 min 30 par désinscription et par réponse, 6 s par mail rangé, 12 s par raccourci (filtre ou mention par Tab, @agent depuis ⌘K).')}</InfoHint>
         </p>
       ) : null}
     </section>
@@ -177,7 +182,8 @@ type Remaining = Outputs['cleanup']['remaining'];
 function RemainingCard({ left, onStarted }: { left: Remaining; onStarted: (runId: string) => void }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const { data: recap, isLoading } = useQuery({ ...trpc.cleanup.recap.queryOptions(), enabled: left.unread > 0, staleTime: 5 * 60_000 });
+  const { spaceId: cleanSpace } = useSpaces();
+  const { data: recap, isLoading } = useQuery({ ...trpc.cleanup.recap.queryOptions({ spaceId: cleanSpace }), enabled: left.unread > 0, staleTime: 5 * 60_000 });
   const start = useMutation(
     trpc.cleanup.start.mutationOptions({
       onSuccess: (run) => {
@@ -190,7 +196,7 @@ function RemainingCard({ left, onStarted }: { left: Remaining; onStarted: (runId
   // ⌘↵ anywhere on the overview starts it.
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !start.isPending && left.unread > 0 && !(e.target as HTMLElement).closest('input, textarea, [contenteditable]')) start.mutate();
+      if (e.key === 'Enter' && (e.metaKey || e.ctrlKey) && !start.isPending && left.unread > 0 && !(e.target as HTMLElement).closest('input, textarea, [contenteditable]')) start.mutate({ notify: false, spaceId: cleanSpace });
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
@@ -239,7 +245,7 @@ function RemainingCard({ left, onStarted }: { left: Remaining; onStarted: (runId
       <button
         type="button"
         disabled={start.isPending}
-        onClick={() => start.mutate()}
+        onClick={() => start.mutate({ notify: false, spaceId: cleanSpace })}
         className="group bg-foreground text-background hover:bg-foreground/90 mt-4 flex h-11 w-full items-center justify-center gap-2 rounded-xl text-[14px] font-semibold shadow-sm transition-colors disabled:opacity-70"
       >
         {start.isPending ? <Loader2 className="size-4.5 animate-spin" /> : <SolarIcon name="_ai" className="size-4.5" />}

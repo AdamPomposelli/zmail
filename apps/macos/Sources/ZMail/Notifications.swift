@@ -58,16 +58,32 @@ final class NotificationManager: NSObject {
         }
     }
 
-    func post(_ payload: NotificationPayload) async throws {
+    struct NotAuthorized: LocalizedError {
+        var errorDescription: String? { "notifications_denied" }
+    }
+
+    /// Shows a notification and says how: `card` (a code, on ZMail's floating card) or `native`.
+    /// Throws `NotAuthorized` when macOS has ZMail's notifications turned off, so the engine knows.
+    @discardableResult
+    func post(_ payload: NotificationPayload) async throws -> String {
+        // A code always goes on the floating card: visible at once, one click to copy, and it does
+        // not depend on the notification permission.
+        if payload.kind == "otp", let otp = payload.otp {
+            CodeCard.shared.show(code: otp, title: payload.title, subtitle: payload.subtitle ?? Self.sender(of: payload.body), threadId: payload.threadId)
+            return "card"
+        }
         guard let center else {
             postViaAppleScript(payload)
-            return
+            return "native"
         }
+        await refreshStatus()
+        guard status == "authorized" else { throw NotAuthorized() }
         let content = UNMutableNotificationContent()
         content.title = payload.title
         if let subtitle = payload.subtitle { content.subtitle = subtitle }
         content.body = payload.body
-        content.sound = .default
+        // Codes arrive silently (they already show on the code card); other alerts keep the sound.
+        content.sound = payload.kind == "otp" ? nil : .default
         var info: [String: String] = ["kind": payload.kind]
         if let threadId = payload.threadId { info["threadId"] = threadId; content.threadIdentifier = threadId }
         if payload.kind == "otp" {
@@ -79,6 +95,13 @@ final class NotificationManager: NSObject {
         content.userInfo = info
         let request = UNNotificationRequest(identifier: payload.id, content: content, trigger: nil)
         try await center.add(request)
+        return "native"
+    }
+
+    /// « Slash : Your verification code » → « Slash ».
+    private static func sender(of body: String) -> String? {
+        let name = body.components(separatedBy: " : ").first ?? body.components(separatedBy: ": ").first
+        return name.flatMap { $0.count <= 40 ? $0 : nil }
     }
 
     private func postViaAppleScript(_ payload: NotificationPayload) {

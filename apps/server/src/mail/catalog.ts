@@ -24,6 +24,10 @@ export type Tag = {
   kind: 'system' | 'custom';
   icon: string | null;
   sort: number;
+  /** The space it belongs to; null: every space. */
+  spaceId: string | null;
+  /** Its mails skip the inbox: they show only in the category. */
+  hideFromInbox: boolean;
 };
 
 const slugify = (value: string) =>
@@ -41,10 +45,11 @@ export class Catalog {
   seed() {
     const existing = new Set(this.db.all<{ id: string }>('SELECT id FROM tags').map((r) => r.id));
     const upgrade = existing.size > 0;
+    const sober = packFor('both');
     SYSTEM_TAGS.forEach((tag, sort) => {
       if (existing.has(tag.id)) return;
       // A category added by an update stays a template on an existing install: nothing new
-      // appears in the sidebar unasked (Settings → Categories offers it).
+      // appears in the sidebar unasked (Settings → Categories offers it). A new install starts sober.
       this.db.run(
         `INSERT INTO tags (id, name, color, description, kind, icon, sort, created_at, hidden) VALUES (?, ?, ?, ?, 'system', ?, ?, ?, ?)`,
         tag.id,
@@ -54,7 +59,7 @@ export class Catalog {
         tag.icon,
         sort,
         Date.now(),
-        upgrade ? 1 : 0,
+        upgrade || !sober.has(tag.id) ? 1 : 0,
       );
     });
     for (const tag of SYSTEM_TAGS) {
@@ -184,15 +189,45 @@ export class Catalog {
     );
   }
 
+  /** Every mail's business again, after the businesses or their criteria changed (user choices kept). */
+  reassignBusinesses(accountId?: string) {
+    const rows = this.db.all<{ id: string; account_id: string; from_email: string; to_json: string; cc_json: string; delivered_to: string | null }>(
+      `SELECT m.id, m.account_id, m.from_email, m.to_json, m.cc_json, m.delivered_to FROM messages m JOIN triage t ON t.message_id = m.id
+       WHERE t.user_override = 0 ${accountId ? 'AND m.account_id = ?' : ''}`,
+      ...(accountId ? [accountId] : []),
+    );
+    this.db.tx(() => {
+      for (const row of rows) {
+        const businessId = this.resolveBusiness({ accountId: row.account_id, from: { email: row.from_email }, to: JSON.parse(row.to_json), cc: JSON.parse(row.cc_json), deliveredTo: row.delivered_to });
+        this.db.run('UPDATE triage SET business_id = ? WHERE message_id = ?', businessId, row.id);
+      }
+    });
+    return rows.length;
+  }
+
+  /** One account's business, from its settings: replaces the « receiving account » criteria pointing at it. */
+  setAccountBusiness(accountId: string, businessId: string | null) {
+    this.db.tx(() => {
+      this.db.run(`DELETE FROM business_matchers WHERE type = 'account' AND value = ?`, accountId);
+      if (businessId) this.db.run(`INSERT INTO business_matchers (id, business_id, type, value) VALUES (?, ?, 'account', ?)`, newId('bm'), businessId, accountId);
+      this.db.run('UPDATE accounts SET business_id = ? WHERE id = ?', businessId, accountId);
+    });
+    this.reassignBusinesses(accountId);
+  }
+
   // ── Tags ─────────────────────────────────────────────────────────────────────
 
   /** The categories in use. Built-in ones the user removed are left out (see hiddenTags). */
   tags(): Tag[] {
-    return this.db.all<Tag>('SELECT id, name, color, description, kind, icon, sort FROM tags WHERE hidden = 0 ORDER BY kind DESC, sort, name');
+    return this.db
+      .all<Tag>('SELECT id, name, color, description, kind, icon, sort, space_id AS spaceId, hide_from_inbox AS hideFromInbox FROM tags WHERE hidden = 0 ORDER BY kind DESC, sort, name')
+      .map((t) => ({ ...t, hideFromInbox: Boolean(t.hideFromInbox) }));
   }
 
   hiddenTags(): Tag[] {
-    return this.db.all<Tag>('SELECT id, name, color, description, kind, icon, sort FROM tags WHERE hidden = 1 ORDER BY sort, name');
+    return this.db
+      .all<Tag>('SELECT id, name, color, description, kind, icon, sort, space_id AS spaceId, hide_from_inbox AS hideFromInbox FROM tags WHERE hidden = 1 ORDER BY sort, name')
+      .map((t) => ({ ...t, hideFromInbox: Boolean(t.hideFromInbox) }));
   }
 
   restoreTag(id: string) {
@@ -208,15 +243,26 @@ export class Catalog {
     return this.tags().find((t) => t.id === nameOrId || t.id === key || slugify(t.name) === key);
   }
 
-  saveTag(input: { id?: string; name: string; color: string; description: string; icon?: string | null }) {
+  /** « Masquer de la boîte de réception » : the category's mails show only in the category. */
+  setHideFromInbox(id: string, hide: boolean) {
+    this.db.run('UPDATE tags SET hide_from_inbox = ? WHERE id = ?', hide ? 1 : 0, id);
+  }
+
+  /** The categories the AI may use for a mail of `spaceId`: the shared ones and that space's own. */
+  tagsForSpace(spaceId: string): Tag[] {
+    return this.tags().filter((t) => !t.spaceId || t.spaceId === spaceId);
+  }
+
+  saveTag(input: { id?: string; name: string; color: string; description: string; icon?: string | null; spaceId?: string | null; hideFromInbox?: boolean }) {
     if (input.id && this.tag(input.id)) {
       this.db.run('UPDATE tags SET name = ?, color = ?, description = ?, icon = ? WHERE id = ?', input.name, input.color, input.description, input.icon ?? null, input.id);
+      if (input.hideFromInbox !== undefined) this.setHideFromInbox(input.id, input.hideFromInbox);
       return this.tag(input.id)!;
     }
     let id = slugify(input.name);
     while (this.tag(id)) id = `${slugify(input.name)}-${Math.random().toString(36).slice(2, 5)}`;
     this.db.run(
-      `INSERT INTO tags (id, name, color, description, kind, icon, sort, created_at) VALUES (?, ?, ?, ?, 'custom', ?, ?, ?)`,
+      `INSERT INTO tags (id, name, color, description, kind, icon, sort, created_at, space_id) VALUES (?, ?, ?, ?, 'custom', ?, ?, ?, ?)`,
       id,
       input.name,
       input.color,
@@ -224,7 +270,9 @@ export class Catalog {
       input.icon ?? null,
       1000,
       Date.now(),
+      input.spaceId && input.spaceId !== 'main' ? input.spaceId : null,
     );
+    if (input.hideFromInbox) this.setHideFromInbox(id, true);
     return this.tag(id)!;
   }
 

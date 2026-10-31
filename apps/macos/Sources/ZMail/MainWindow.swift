@@ -163,6 +163,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('\(safe)'))")
     }
 
+    /// Fires a window event with a JSON detail (the updater's state: `zmail:update`).
+    func send(event name: String, json: String) {
+        let safe = name.filter { $0.isLetter || $0 == ":" || $0 == "-" }
+        webView?.evaluateJavaScript("window.dispatchEvent(new CustomEvent('\(safe)', { detail: \(json) }))")
+    }
+
     func present() {
         cancelHibernation()
         if hibernated { wake() }
@@ -299,6 +305,12 @@ final class MainWindowController: NSWindowController, NSWindowDelegate {
         case "startDrag":
             // WKWebView has no CSS drag regions: the page asks, and the pending mouse-down drags the window.
             (webView as? DragWebView)?.dragWindowFromLastMouseDown()
+        case "getUpdateState":
+            Updater.shared.publish()
+        case "checkForUpdates":
+            Updater.shared.check(userInitiated: true)
+        case "installUpdate":
+            Updater.shared.installAndRelaunch()
         case "setLocale":
             if let locale = msg["locale"] as? String { L10n.save(locale) }
         case "zoomWindow":

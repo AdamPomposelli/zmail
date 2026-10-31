@@ -95,4 +95,24 @@ describe('inbox cleaner', () => {
     expect(s).not.toHaveProperty('hourlyRate');
     expect(s.replied).toBe(1);
   });
+
+  it('powers the smart bars: senders to Tab, « from: » search, shortcuts counted, mentions given to the agent', async () => {
+    expect(engine.store.senders('clai').map((x) => x.email)).toEqual(['client@claire.test']);
+    expect(engine.store.senders('Promo')[0]).toMatchObject({ email: 'promo@promoflash.test', name: 'Promo Flash' });
+    // A sender picked in ⌘K: only their mail, archived mail included.
+    const fromClaire = engine.store.listThreads({ view: 'inbox', query: 'from:client@claire.test', limit: 20 }).items.map((i) => i.id);
+    expect(fromClaire).toEqual([ids.client]);
+    expect(engine.store.listThreads({ view: 'inbox', query: 'from:promoflash', limit: 20 }).items.map((i) => i.id)).toEqual([ids.promo]);
+    const before = engine.cleaner.savings();
+    engine.cleaner.trackShortcut();
+    expect(engine.cleaner.savings()).toMatchObject({ shortcuts: before.shortcuts + 1, seconds: before.seconds + 12 });
+    // An @mail and a #category reach the model with their ids.
+    let seen = '';
+    engine.ai.override = () => [{ id: 'fake', label: 'fake', model: 'fake', complete: async (req) => ((seen = req.prompt), { text: JSON.stringify({ reply: 'ok', actions: [] }) }) }];
+    await engine.agent.chat('Résume ce mail', [], { threadIds: [ids.client!], tagIds: ['finance'], senders: [], accountIds: [] });
+    engine.ai.override = null;
+    expect(seen).toContain(`mail thread ${ids.client}`);
+    expect(seen).toContain('Devis application');
+    expect(seen).toContain('catégorie finance');
+  });
 });

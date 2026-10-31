@@ -1,6 +1,7 @@
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Archive, ArrowDownWideNarrow, ArrowRight, CheckCheck, Inbox, ListChecks, Loader2, Rows2, Rows4, Search, ShieldBan, Trash2, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { toast } from 'sonner';
 import { Link } from 'react-router';
 import { useHotkeys } from 'react-hotkeys-hook';
 import { Tooltip, TooltipContent, TooltipTrigger } from '@/components/ui/tooltip';
@@ -9,8 +10,11 @@ import { ReplyTree } from './reply-tree';
 import { BusinessBadge, TagChip } from './chips';
 import { useCatalog } from '@/hooks/use-catalog';
 import { useMailRoute, VIEW_TITLES } from '@/hooks/use-mail-route';
-import { useThreadActions } from '@/hooks/use-thread-actions';
+import { useThreadActions, type ThreadAction } from '@/hooks/use-thread-actions';
+import { MailDragGhost, startMailDrag } from '@/lib/mail-drag';
 import { useTRPC, type ThreadItem } from '@/lib/trpc';
+import { useSpaces } from '@/hooks/use-space';
+import { flushViews, trackGesture } from '@/lib/track';
 import { cn, isMac } from '@/lib/utils';
 import { t, tp } from '@/lib/i18n';
 import { bootDone } from '@/lib/boot';
@@ -43,7 +47,7 @@ export function ThreadList({
   const trpc = useTRPC();
   const route = useMailRoute();
   const catalog = useCatalog();
-  const { run } = useThreadActions();
+  const { run, patchLists } = useThreadActions();
   const lastChecked = useRef<string | null>(null);
   const sentinel = useRef<HTMLDivElement>(null);
   const scroller = useRef<HTMLDivElement>(null);
@@ -83,34 +87,75 @@ export function ThreadList({
       return next;
     });
 
+  // Only the current space's mail (an account or a folder picked in the sidebar shows all of it).
+  const { spaceId } = useSpaces();
   const query = useInfiniteQuery(
     trpc.mail.list.infiniteQueryOptions(
-      { view: route.view, businessId: route.businessId, tagId: route.tagId, accountId: route.accountId, mailboxId: route.mailboxId, query: route.query || null, sort: route.sort, limit: 60 },
-      // While typing a search, the previous results stay on screen until the new ones arrive.
-      { getNextPageParam: (last) => last.nextCursor ?? undefined, refetchInterval: 60_000, placeholderData: keepPreviousData },
+      { view: route.view, businessId: route.businessId, tagId: route.tagId, accountId: route.accountId, mailboxId: route.mailboxId, spaceId, query: route.query || null, sort: route.sort, limit: 60 },
+      {
+        getNextPageParam: (last) => last.nextCursor ?? undefined,
+        refetchInterval: 60_000,
+        // While typing a search, the previous results stay on screen until the new ones arrive;
+        // another space's mail never does: a skeleton shows at once instead (if it was not prefetched).
+        placeholderData: (previous, previousQuery) => (spaceOfListKey(previousQuery?.queryKey) === spaceId ? keepPreviousData(previous) : undefined),
+      },
     ),
   );
   const items = useMemo(() => query.data?.pages.flatMap((p) => p.items) ?? [], [query.data]);
+  // A search that stays (not every keystroke) goes to the habits analysis, with what it found.
+  const searched = route.query.trim();
+  const found = query.isSuccess && !query.isPlaceholderData ? items.length : null;
+  useEffect(() => {
+    if (!searched || found === null) return;
+    const timer = setTimeout(() => trackGesture({ action: 'search', meta: { query: searched.slice(0, 200), results: found } }), 1500);
+    return () => clearTimeout(timer);
+  }, [searched, found]);
   // The first page of mails is what the boot skeleton was waiting for.
   useEffect(() => {
     if (query.isSuccess || query.isError) bootDone();
   }, [query.isSuccess, query.isError]);
   useEffect(() => onItems(items), [items, onItems]);
 
+  // A folder keeps its latest mails locally; at the bottom, the older ones come from the server,
+  // a page at a time, until the server has no more.
+  const loadOlder = useMutation(trpc.accounts.loadOlder.mutationOptions());
+  const [serverDone, setServerDone] = useState<Record<string, boolean>>({});
+  const olderFolder = route.mailboxId && !route.query ? route.mailboxId : null;
+  const canLoadOlder = Boolean(olderFolder) && !query.hasNextPage && !query.isFetching && !serverDone[olderFolder!];
+  const fetchOlder = useCallback(() => {
+    if (!olderFolder || loadOlder.isPending) return;
+    loadOlder.mutate(
+      { mailboxId: olderFolder },
+      {
+        onSuccess: (result) => {
+          if (!result.more || result.fetched === 0) setServerDone((prev) => ({ ...prev, [olderFolder]: true }));
+          void queryClient.invalidateQueries({ queryKey: trpc.mail.list.pathKey() });
+        },
+        onError: () => setServerDone((prev) => ({ ...prev, [olderFolder]: true })),
+      },
+    );
+  }, [olderFolder, loadOlder, queryClient, trpc]);
+
   useEffect(() => {
     const node = sentinel.current;
     if (!node) return;
     const observer = new IntersectionObserver((entries) => {
-      if (entries[0]?.isIntersecting && query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
+      if (!entries[0]?.isIntersecting) return;
+      if (query.hasNextPage && !query.isFetchingNextPage) void query.fetchNextPage();
+      else if (canLoadOlder) fetchOlder();
     });
     observer.observe(node);
     return () => observer.disconnect();
-  }, [query]);
+  }, [query, canLoadOlder, fetchOlder]);
 
+  // Follows the keyboard (j/k), never a list refresh: new or re-sorted mail must not move the
+  // list back to the focused row while the user is scrolling.
+  const itemsRef = useRef(items);
+  itemsRef.current = items;
   useEffect(() => {
-    const id = items[focusIndex]?.id;
+    const id = itemsRef.current[focusIndex]?.id;
     if (id) document.querySelector(`[data-thread-id="${id}"]`)?.scrollIntoView({ block: 'nearest' });
-  }, [focusIndex, items]);
+  }, [focusIndex]);
 
   const smart = route.sort === 'smart' && ['inbox', 'unread', 'priority'].includes(route.view);
   const isTop = (t: ThreadItem) => t.priority >= 2 && (t.unread || Date.now() - t.date < 3 * 86400_000);
@@ -166,6 +211,9 @@ export function ThreadList({
       if (!box || event.button !== 0 || (event.target as HTMLElement).closest('button, a, input, [role="treeitem"], [data-no-marquee]')) return;
       const startY = event.clientY - box.getBoundingClientRect().top + box.scrollTop;
       const base = event.metaKey || event.ctrlKey ? selectionRef.current : [];
+      // Pressed on a conversation and moved sideways (towards the sidebar): the conversation is
+      // dragged onto a folder. Moved up or down: the selection box, as before.
+      const rowId = (event.target as HTMLElement).closest<HTMLElement>('[data-thread-id]')?.dataset.threadId ?? null;
       let lastY = event.clientY;
       let active = false;
       let frame = 0;
@@ -192,7 +240,17 @@ export function ThreadList({
       const move = (e: PointerEvent) => {
         lastY = e.clientY;
         if (!active) {
-          if (Math.abs(e.clientY - event.clientY) < 6) return;
+          const dx = Math.abs(e.clientX - event.clientX);
+          const dy = Math.abs(e.clientY - event.clientY);
+          if (dx < 6 && dy < 6) return;
+          if (rowId && dx > dy) {
+            window.removeEventListener('pointermove', move);
+            window.removeEventListener('pointerup', up);
+            window.removeEventListener('pointercancel', up);
+            dragToFolder.current(rowId, e.clientX, e.clientY);
+            return;
+          }
+          if (dy < 6) return;
           active = true;
           document.body.style.userSelect = 'none';
           frame = requestAnimationFrame(tick);
@@ -220,7 +278,53 @@ export function ThreadList({
     [setSelection],
   );
 
-  const flow = useCategoryFlow(useQuery(trpc.mail.counts.queryOptions()).data);
+  // Drag onto a sidebar folder: the conversation (or the selection it belongs to, same account).
+  const moveToFolder = useMutation(trpc.mail.moveToFolder.mutationOptions());
+  const moveToSpace = useMutation(trpc.mail.moveToSpace.mutationOptions());
+  const dragToFolder = useRef<(rowId: string, x: number, y: number) => void>(() => undefined);
+  dragToFolder.current = (rowId, x, y) => {
+    const row = items.find((t) => t.id === rowId);
+    if (!row) return;
+    const ids = selection.includes(rowId) ? items.filter((t) => selection.includes(t.id) && t.accountId === row.accountId).map((t) => t.id) : [rowId];
+    startMailDrag({ ids, accountId: row.accountId, subject: row.subject, x, y }, async (target) => {
+      setSelection([]);
+      const special = { archive: 'archive', trash: 'trash', junk: 'spam', inbox: 'restore', all: 'archive' }[target.special ?? ''] as ThreadAction | undefined;
+      if (special) return void run(special, ids);
+      if (target.spaceId) {
+        // Dropped on a space: the conversations leave this space's list at once.
+        const rollback = patchLists(ids, () => null);
+        try {
+          flushViews(ids);
+          await moveToSpace.mutateAsync({ threadIds: ids, spaceId: target.spaceId });
+          toast.success(tp(ids.length, 'Déplacé vers l’espace {space}', '{n} conversations déplacées vers l’espace {space}', { space: target.label }));
+        } catch (error) {
+          rollback();
+          toast.error((error as Error).message);
+        } finally {
+          void queryClient.invalidateQueries({ queryKey: trpc.mail.list.pathKey() });
+          void queryClient.invalidateQueries({ queryKey: trpc.mail.counts.queryKey() });
+        }
+        return;
+      }
+      if (!target.mailboxId) return;
+      // Leaves the current list at once (unless this list is that folder), back if it fails.
+      const rollback = route.mailboxId === target.mailboxId ? () => undefined : patchLists(ids, () => null);
+      try {
+        flushViews(ids);
+        await moveToFolder.mutateAsync({ threadIds: ids, mailboxId: target.mailboxId });
+        toast.success(tp(ids.length, 'Déplacé dans {folder}', '{n} conversations déplacées dans {folder}', { folder: target.label }));
+      } catch (error) {
+        rollback();
+        toast.error((error as Error).message);
+      } finally {
+        void queryClient.invalidateQueries({ queryKey: trpc.mail.list.pathKey() });
+        void queryClient.invalidateQueries({ queryKey: trpc.mail.counts.queryKey() });
+      }
+    });
+  };
+
+  const { spaceId: countsSpace } = useSpaces();
+  const flow = useCategoryFlow(useQuery(trpc.mail.counts.queryOptions({ spaceId: countsSpace })).data);
 
   const { data: folders } = useQuery({ ...trpc.accounts.folders.queryOptions(), enabled: Boolean(route.mailboxId) });
   const folderName = folders?.find((f) => f.id === route.mailboxId)?.name;
@@ -235,6 +339,9 @@ export function ThreadList({
           : route.accountId
             ? catalog.accountById.get(route.accountId)?.email
             : VIEW_TITLES[route.view];
+  // The search keeps this list's filters: say what it searches (all accounts only in the main inbox).
+  const allAccounts = route.view === 'inbox' && !route.businessId && !route.tagId && !route.accountId && !route.mailboxId;
+  const account = route.accountId && route.view === 'inbox' && !route.mailboxId && !route.tagId && !route.businessId ? catalog.accountById.get(route.accountId) : undefined;
   const business = route.businessId ? catalog.businessById.get(route.businessId) : undefined;
   const tag = route.tagId ? catalog.tagById.get(route.tagId) : undefined;
   const empty = EMPTY[route.view] ?? { title: t('Rien ici'), body: t('Aucune conversation dans cette vue.') };
@@ -244,6 +351,7 @@ export function ThreadList({
 
   return (
     <div className="flex h-full min-w-0 flex-col">
+      <MailDragGhost />
       <header data-drag-region className="flex shrink-0 flex-col gap-2.5 px-4 pt-3.5 pb-2.5">
         <div className="flex items-center gap-2">
           {business ? <BusinessBadge business={business} compact /> : null}
@@ -347,7 +455,7 @@ export function ThreadList({
               ref={searchRef}
               value={search}
               onChange={(e) => setSearch(e.target.value)}
-              placeholder={t('Rechercher dans tous les comptes…')}
+              placeholder={allAccounts ? t('Rechercher dans tous les comptes…') : t('Rechercher dans {scope}…', { scope: account?.label || title || '' })}
               className="placeholder:text-muted-foreground min-w-0 flex-1 bg-transparent outline-none"
               onKeyDown={(e) => {
                 // Enter searches at once (no wait) and opens nothing: results are already live.
@@ -440,8 +548,22 @@ export function ThreadList({
                 ) : null}
               </div>
             ))}
-            <div ref={sentinel} className="flex h-10 items-center justify-center">
-              {query.isFetchingNextPage ? <Loader2 className="text-muted-foreground size-4 animate-spin" /> : null}
+            <div ref={sentinel} className="flex min-h-10 items-center justify-center px-4 text-center">
+              {query.isFetchingNextPage ? (
+                <Loader2 className="text-muted-foreground size-4 animate-spin" />
+              ) : olderFolder && !query.hasNextPage ? (
+                loadOlder.isPending ? (
+                  <span className="text-muted-foreground flex items-center gap-2 text-[12px]">
+                    <Loader2 className="size-3.5 animate-spin" /> {t('Récupération des mails plus anciens sur le serveur…')}
+                  </span>
+                ) : serverDone[olderFolder] ? (
+                  <span className="text-muted-foreground text-[12px]">{t('Tous les mails de ce dossier sont là.')}</span>
+                ) : (
+                  <button type="button" onClick={fetchOlder} className="text-muted-foreground hover:text-foreground hover:bg-accent rounded-md px-2.5 py-1 text-[12px]">
+                    {t('Charger les mails plus anciens')}
+                  </button>
+                )
+              ) : null}
             </div>
             {!query.hasNextPage && !query.isFetching ? <EndOfList flow={flow} current={flowKey} /> : null}
           </>
@@ -501,6 +623,12 @@ function EndOfList({ flow, current, bare }: { flow: ReturnType<typeof useCategor
 function SectionLabel({ children }: { children: React.ReactNode }) {
   return <div className="text-muted-foreground/80 px-4.5 pt-3 pb-1 text-[11px] font-medium tracking-wide uppercase">{children}</div>;
 }
+
+const spaceOfListKey = (key: unknown) => ((key as [unknown, { input?: { spaceId?: string } }?] | undefined)?.[1]?.input?.spaceId ?? null);
+
+/** A space's inbox exactly as the list asks for it, so a prefetch fills the very same cache entry. */
+export const spaceInboxInput = (spaceId: string, sort: 'smart' | 'date') =>
+  ({ view: 'inbox' as const, businessId: null, tagId: null, accountId: null, mailboxId: null, spaceId, query: null, sort, limit: 60 });
 
 function ListSkeleton() {
   return (

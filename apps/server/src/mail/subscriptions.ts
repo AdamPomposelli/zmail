@@ -1,4 +1,5 @@
 import type { EngineContext } from '../context';
+import { SPACE_EXPR, SPACE_JOINS } from './spaces';
 import type { UnsubscribeInfo } from '../types';
 import type { ActionSource } from './actions';
 import { UnsubscribeAgent, type UnsubscribeOutcome } from '../ai/unsubscribe';
@@ -31,7 +32,7 @@ export class Subscriptions {
     return new UnsubscribeAgent(this.ctx.ai, async (to, subject, body) => {
       const account = this.ctx.accounts.get(accountId);
       if (!account) throw new Error(t('Compte introuvable'));
-      await smtpTransport(account, this.ctx.secrets.decrypt(account.secret)).sendMail({
+      await smtpTransport(account, await this.ctx.oauth.resolve(this.ctx.secrets.decrypt(account.secret), account.id)).sendMail({
         from: account.email,
         to,
         subject,
@@ -100,7 +101,8 @@ export class Subscriptions {
    * subscriptions (each unsubscribes on its own). A mail Gmail keeps in several folders
    * (Inbox, All Mail…) counts once.
    */
-  list(): SubscriptionRow[] {
+  /** Newsletters per sender, within one space when given. */
+  list(spaceId?: string | null): SubscriptionRow[] {
     const senders = this.ctx.db.all<{
       from_email: string;
       from_name: string;
@@ -117,7 +119,8 @@ export class Subscriptions {
          SELECT m.account_id, m.from_email, m.from_name, m.date, m.thread_id, m.unread, t.unsubscribe,
            COALESCE(m.message_id, m.id) AS mail, CASE WHEN mb.special_use = 'trash' THEN 1 ELSE 0 END AS trashed
          FROM messages m JOIN triage t ON t.message_id = m.id JOIN mailboxes mb ON mb.id = m.mailbox_id
-         WHERE t.newsletter = 1 AND mb.special_use IN ('inbox', 'archive', 'all', 'trash')
+         ${SPACE_JOINS}
+         WHERE t.newsletter = 1 AND mb.special_use IN ('inbox', 'archive', 'all', 'trash')${spaceId ? ` AND ${SPACE_EXPR} = ?` : ''}
        ), mails AS (
          SELECT account_id, from_email, mail, MAX(from_name) AS from_name, MAX(date) AS date, MIN(unread) AS unread,
            MAX(unsubscribe) AS unsubscribe, MAX(thread_id) AS thread_id, MIN(trashed) AS trashed
@@ -128,6 +131,7 @@ export class Subscriptions {
          (SELECT x.thread_id FROM mails x WHERE x.account_id = mails.account_id AND x.from_email = mails.from_email ORDER BY x.date DESC LIMIT 1) AS thread_id,
          MAX(unsubscribe) AS unsub, SUM(1 - trashed) AS kept
        FROM mails GROUP BY account_id, from_email ORDER BY total DESC LIMIT 400`,
+      ...(spaceId ? [spaceId] : []),
     );
     // Latest attempt per mailbox and sender (older rows without an account apply to all of them).
     const attempts = this.ctx.db.all<{ account_id: string | null; from_email: string; status: string; detail: string }>(
@@ -152,6 +156,21 @@ export class Subscriptions {
         kept: s.kept,
       };
     });
+  }
+
+  /**
+   * What « Delete all » would move to the trash for one sender on one mailbox, newest first: one
+   * line per mail (Gmail's copies in several labels count once), for the preview before deleting.
+   */
+  senderMails(accountId: string, fromEmail: string) {
+    return this.ctx.db.all<{ id: string; subject: string; snippet: string; date: number }>(
+      `SELECT MIN(m.id) AS id, MAX(m.subject) AS subject, MAX(m.snippet) AS snippet, MAX(m.date) AS date
+       FROM messages m JOIN mailboxes mb ON mb.id = m.mailbox_id
+       WHERE m.account_id = ? AND m.from_email = ? AND COALESCE(mb.special_use, '') NOT IN ('trash', 'sent', 'drafts')
+       GROUP BY COALESCE(m.message_id, m.id) ORDER BY date DESC LIMIT 500`,
+      accountId,
+      fromEmail,
+    );
   }
 
   /**

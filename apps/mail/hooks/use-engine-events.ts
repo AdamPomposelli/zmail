@@ -10,7 +10,7 @@ type EngineEvent =
   | { type: 'sync'; accountId: string; status: string; error?: string | null }
   | { type: 'mail'; reason: string; threadIds: string[] }
   | { type: 'suggestion'; id: string }
-  | { type: 'notification'; id: string; kind: string; title: string; body: string; otp?: string | null; threadId?: string | null }
+  | { type: 'notification'; id: string; kind: string; title: string; body: string; otp?: string | null; threadId?: string | null; delivered?: string }
   | { type: 'unsubscribe'; id: string; status: string; fromEmail: string };
 
 /** Live updates from the engine (SSE): refreshes queries and surfaces notifications in-app. */
@@ -65,8 +65,9 @@ export function useEngineEvents() {
       on('notification', (event) => {
         schedule('notifications');
         if (event.type !== 'notification') return;
-        // The app shows native notifications; in a browser, mirror them as toasts.
-        if (isNativeApp() && event.kind !== 'otp') return;
+        // Shown by macOS or on ZMail's floating code card: no second toast. In a browser, or when
+        // macOS has ZMail's notifications turned off, mirror them here.
+        if (isNativeApp() && (event.delivered === 'native' || event.delivered === 'card')) return;
         const open = event.threadId ? () => navigate(`/mail/inbox?thread=${event.threadId}`) : undefined;
         if (event.otp) {
           toast(event.title, {

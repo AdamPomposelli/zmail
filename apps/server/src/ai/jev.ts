@@ -97,6 +97,7 @@ export const JEV_QUESTIONS = {
   reports_failed_or_overdue_payment: q('Does the message say a payment from the recipient failed or is overdue?', 'A card was declined, or an invoice of the recipient is unpaid past its due date.', 'Payments are fine, or the message is not about the recipient owing money.'),
   reports_service_down: q('Does the message report that a site, a shop or a service of the recipient is down or broken?', 'A site is unreachable, a checkout fails or customers cannot use the service right now.', 'Everything works, or the message is not about an outage.'),
   reports_account_takeover: q('Does the message say the password or the email address of one of the recipient’s accounts was changed?', 'The password or the email address of the account has already been changed.', 'Only a sign-in or a device was noticed, or a reset was merely offered, or nothing was changed.'),
+  threatens_account_access: q('Does the message warn that one of the recipient’s accounts will be suspended, blocked, closed or restricted unless they act?', 'The service says the account will be cut off or limited, or demands an identity check or an update to keep it.', 'No account of the recipient is at risk of being suspended, blocked or closed.'),
   sets_a_near_deadline: q('Does the sender ask the recipient to do something within the next few days?', 'A person asks for an action or a document before a date this week or next.', 'There is no near deadline for the recipient.'),
 } satisfies Record<string, Question>;
 
@@ -132,6 +133,7 @@ export const JEV_SIGNAL_USE: Record<Signal, { group: string; use: string }> = {
   reports_failed_or_overdue_payment: { group: 'Urgences', use: 'Priorité urgente.' },
   reports_service_down: { group: 'Urgences', use: 'Priorité urgente.' },
   reports_account_takeover: { group: 'Urgences', use: 'Priorité urgente, tag « Sécurité ».' },
+  threatens_account_access: { group: 'Urgences', use: 'Priorité haute (urgente avec une échéance proche) : un compte va être suspendu, bloqué ou fermé.' },
   sets_a_near_deadline: { group: 'Ce qui est demandé', use: 'Priorité haute quand une personne fixe une échéance proche.' },
 };
 
@@ -207,6 +209,8 @@ export function parseJevTriage(response: JevResponse, thresholds: { yes: number;
   const record = is('is_purchase_or_payment_record') || leans('is_about_a_delivery') || leans('is_about_a_meeting');
   if (!record && (is('is_promotion') || is('is_editorial_newsletter') || (is('is_automated_status') && !person))) priority = 'low';
   if (otp || leans('is_security_notice') || opportunity || (person && (leans('expects_a_reply') || leans('sets_a_near_deadline')))) priority = 'high';
+  // A service about to cut the recipient off: high, urgent with a near deadline (never for a scam).
+  if (!spam && leans('threatens_account_access')) priority = leans('sets_a_near_deadline') ? 'urgent' : 'high';
   if (dispute || leans('reports_failed_or_overdue_payment') || leans('reports_service_down') || is('reports_account_takeover')) priority = 'urgent';
 
   const tags: string[] = [];

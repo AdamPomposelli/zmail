@@ -84,6 +84,7 @@ export function createMcpServer(engine: EngineContext, key: ApiKey) {
       instructions:
         'ZMail is the user’s local mail client (several accounts, unified inbox, AI triage). Use search_mail / list_threads to find conversations, read_thread to read one. ' +
         'To improve how ZMail sorts mail: triage_report (mistakes), get_ai_setup (current instructions), evaluate_triage (measure a change), then update_ai_prompt. ' +
+        'To understand the user’s habits and propose rules: behavior_analytics (shares per sender, domain, list, category…, habits above a threshold with the rule that would automate each), activity_log for the raw gestures. ' +
         (canWrite
           ? 'Write tools act on the user’s real mailboxes: confirm with the user before sending mail or trashing.'
           : 'This key is read-only.'),
@@ -212,6 +213,44 @@ export function createMcpServer(engine: EngineContext, key: ApiKey) {
       annotations: read,
     },
     ({ days }) => run(() => engine.lab.report(days)),
+  );
+
+  server.registerTool(
+    'behavior_analytics',
+    {
+      title: t('Habitudes'),
+      description:
+        'The user’s habits as a data analyst would read them, over the last N days. overview: share of conversations opened, decided, archived, deleted, filed, left untouched; share deleted without being opened; median reading time before each decision. ' +
+        'dimensions: one probability table per sender, domain, list, category, business, account, space, newsletter and priority (n, opened share, average reading time, share of each outcome, top folder or space). ' +
+        'habits: groups where one outcome reaches the threshold (default 70 %) on at least minSupport mails, with a Wilson confidence, the lift against the whole mailbox, whether it is safe to automate and the ready rule (create it with create_rule only after the user agrees). ' +
+        'graph: sources and categories linked to outcomes and folders, weighted. Outcomes: archive, trash, spam, folder, space, tag, read (opened, nothing decided), markRead, untouched.',
+      inputSchema: {
+        days: z.number().int().min(7).max(365).default(90),
+        threshold: z.number().min(0.5).max(1).default(0.7).describe('Share of a group above which an outcome counts as a habit.'),
+        min_support: z.number().int().min(2).max(50).default(3).describe('Minimum number of mails behind a habit.'),
+        dimensions: z.array(z.enum(['sender', 'domain', 'list', 'category', 'business', 'account', 'space', 'newsletter', 'priority'])).optional().describe('Only these probability tables (all by default).'),
+        top: z.number().int().min(1).max(200).default(25).describe('Rows per table.'),
+      },
+      annotations: read,
+    },
+    ({ days, threshold, min_support, dimensions, top }) =>
+      run(() => {
+        const a = engine.behavior.analyze({ days, threshold, minSupport: min_support });
+        const wanted = dimensions ?? (Object.keys(a.dimensions) as (keyof typeof a.dimensions)[]);
+        return { ...a, dimensions: Object.fromEntries(wanted.map((d) => [d, a.dimensions[d].slice(0, top)])) };
+      }),
+  );
+
+  server.registerTool(
+    'activity_log',
+    {
+      title: t('Journal d’activité'),
+      description:
+        'The raw gestures, newest first: action (open, view, archive, trash, spam, moveToFolder, moveToSpace, addTag, star, reply, unsubscribe, search, openLink, downloadAttachment, copyOtp…), sender, subject, and the context of each: opened in ZMail before (opened), reading time (dwell_ms: for « view » that reading, otherwise all readings before), age of the mail (age_ms), mailbox it was in, conversations in the same gesture (batch).',
+      inputSchema: { limit: z.number().int().min(1).max(1000).default(200), offset: z.number().int().min(0).default(0), include_reads: z.boolean().default(false).describe('Include every « view » and search.') },
+      annotations: read,
+    },
+    ({ limit, offset, include_reads }) => run(() => engine.patterns.history(limit, offset, include_reads)),
   );
 
   if (!canWrite) return server;

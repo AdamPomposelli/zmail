@@ -14,4 +14,5 @@ export default {
   'Trousseau inaccessible : {error}': 'Keychain unavailable: {error}',
   'ZMail n’a pas pu déverrouiller vos clés.': 'ZMail could not unlock your keys.',
   'Expéditeur non authentifié : le domaine {domain} n’a pas signé ce mail (usurpation probable)': 'Unauthenticated sender: {domain} did not sign this email (likely spoofing)',
+  'Dossier introuvable': 'Folder not found',
 } satisfies Record<string, string>;

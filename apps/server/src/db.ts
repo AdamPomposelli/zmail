@@ -243,6 +243,56 @@ const MIGRATIONS: string[] = [
   -- The receiving provider's SPF/DKIM/DMARC verdict (Authentication-Results), see mail/auth.ts.
   ALTER TABLE messages ADD COLUMN auth_results TEXT;
   `,
+  `
+  -- The sidebar groups accounts: 'business', 'personal', or NULL (neither). Existing accounts:
+  -- business when linked to a business, personal otherwise.
+  ALTER TABLE accounts ADD COLUMN kind TEXT;
+  UPDATE accounts SET kind = CASE WHEN business_id IS NOT NULL THEN 'business' ELSE 'personal' END;
+  -- The account's own icon: 'icon:<name>', 'brand:<logo>' or 'image:data:…' (a logo the user picked).
+  ALTER TABLE accounts ADD COLUMN icon TEXT;
+  `,
+  `
+  -- Spaces (as in Arc): each has its own inbox, favourites, subscriptions and categories.
+  -- A mail's space is resolved when read (mail/spaces.ts): the conversation moved by hand,
+  -- else its business's space, else its account's, else « main ».
+  CREATE TABLE spaces (
+    id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    icon TEXT,
+    color TEXT NOT NULL,
+    sort INTEGER NOT NULL DEFAULT 0,
+    created_at INTEGER NOT NULL
+  );
+  INSERT INTO spaces (id, name, icon, color, sort, created_at) VALUES ('main', 'Principal', NULL, '#6366F1', 0, 0);
+  CREATE TABLE space_overrides (
+    thread_id TEXT PRIMARY KEY,
+    space_id TEXT NOT NULL REFERENCES spaces(id) ON DELETE CASCADE,
+    source TEXT NOT NULL,          -- user | rule | agent
+    at INTEGER NOT NULL
+  );
+  ALTER TABLE accounts ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL;
+  ALTER TABLE businesses ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE SET NULL;
+  -- A category made inside a space belongs to it; NULL: shown in every space.
+  ALTER TABLE tags ADD COLUMN space_id TEXT REFERENCES spaces(id) ON DELETE CASCADE;
+  `,
+  `
+  -- « Masquer de la boîte de réception » : a category's mails skip the inbox (of their space)
+  -- and are only seen in that category, like Gmail's « Skip the inbox ».
+  ALTER TABLE tags ADD COLUMN hide_from_inbox INTEGER NOT NULL DEFAULT 0;
+  `,
+  `
+  -- What surrounded each gesture, for the behaviour analysis (rules/behavior.ts): was the mail
+  -- opened first, how long was it read, how old was it, where was it, what had the AI said.
+  ALTER TABLE action_log ADD COLUMN opened INTEGER;        -- 1 opened in ZMail before the gesture, 0 not
+  ALTER TABLE action_log ADD COLUMN was_unread INTEGER;    -- still unread at that moment
+  ALTER TABLE action_log ADD COLUMN dwell_ms INTEGER;      -- « view »: that reading; others: all readings before
+  ALTER TABLE action_log ADD COLUMN age_ms INTEGER;        -- time since the mail arrived
+  ALTER TABLE action_log ADD COLUMN mailbox TEXT;          -- inbox, archive, junk… or the folder's path
+  ALTER TABLE action_log ADD COLUMN space_id TEXT;
+  ALTER TABLE action_log ADD COLUMN priority INTEGER;      -- the AI's priority then (0–3)
+  ALTER TABLE action_log ADD COLUMN batch INTEGER NOT NULL DEFAULT 1; -- conversations in the same gesture
+  CREATE INDEX action_log_thread ON action_log(thread_id, action);
+  `,
 ];
 
 export type Row = Record<string, unknown>;

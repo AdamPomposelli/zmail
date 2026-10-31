@@ -9,6 +9,7 @@ export default {
   'Lecture des en-têtes…': 'Reading headers…',
   'De': 'From',
   'À': 'To',
+  'Cc': 'Cc',
   'Répondre à': 'Reply-To',
   'Reçu sur': 'Received on',
   'Dossier': 'Folder',

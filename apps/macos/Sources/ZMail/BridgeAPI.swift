@@ -104,8 +104,10 @@ final class BridgeAPI: Sendable {
             otp: body["otp"] as? String,
             threadId: body["threadId"] as? String)
         do {
-            try await notifications.post(payload)
-            return .json(200, ["ok": true])
+            let delivered = try await notifications.post(payload)
+            return .json(200, ["ok": true, "delivered": delivered])
+        } catch is NotificationManager.NotAuthorized {
+            return .json(409, ["error": "notifications_denied", "message": "macOS notifications are turned off for ZMail"])
         } catch {
             return .json(500, ["error": "notify_failed", "message": error.localizedDescription])
         }

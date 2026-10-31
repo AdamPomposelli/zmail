@@ -8,16 +8,18 @@
 #   ZMAIL_ENGINE_SRC  directory containing engine.mjs   (default: apps/server/dist)
 #   ZMAIL_UI_SRC      directory containing index.html   (default: apps/mail/build/client)
 #   NODE_BIN          node binary to embed              (default: $(command -v node))
-#   ZMAIL_VERSION     CFBundleShortVersionString         (default: 0.1.0)
+#   ZMAIL_DIST        output folder                      (default: dist; tests build elsewhere)
+#   ZMAIL_BUNDLE_ID   bundle identifier                  (default: com.zippy.zmail; tests only)
+#   ZMAIL_VERSION     CFBundleShortVersionString         (default: "version" in package.json)
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 PKG="$ROOT/apps/macos"
-DIST="$ROOT/dist"
+DIST="${ZMAIL_DIST:-$ROOT/dist}"
 APP="$DIST/ZMail.app"
 ENGINE_SRC="${ZMAIL_ENGINE_SRC:-$ROOT/apps/server/dist}"
 UI_SRC="${ZMAIL_UI_SRC:-$ROOT/apps/mail/build/client}"
-VERSION="${ZMAIL_VERSION:-0.1.0}"
+VERSION="${ZMAIL_VERSION:-$(node -p "require('$ROOT/package.json').version")}"
 BUILD_NUMBER="$(date +%Y%m%d%H%M)"
 
 WITH_WEB=0
@@ -58,7 +60,7 @@ cat > "$APP/Contents/Info.plist" <<PLIST
 <dict>
   <key>CFBundleDevelopmentRegion</key><string>fr</string>
   <key>CFBundleExecutable</key><string>ZMail</string>
-  <key>CFBundleIdentifier</key><string>com.zippy.zmail</string>
+  <key>CFBundleIdentifier</key><string>${ZMAIL_BUNDLE_ID:-com.zippy.zmail}</string>
   <key>NSMicrophoneUsageDescription</key><string>ZMail écoute votre voix uniquement quand vous dictez un mail à l’assistant.</string>
   <key>NSSpeechRecognitionUsageDescription</key><string>Pour transformer votre voix en texte quand vous dictez un mail, sur votre Mac.</string>
   <key>CFBundleName</key><string>ZMail</string>

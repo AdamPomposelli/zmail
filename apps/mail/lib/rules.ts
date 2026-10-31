@@ -38,6 +38,8 @@ export const ACTION_LABELS: Record<Action['type'], string> = {
   addTag: t('ajouter la catégorie'),
   setPriority: t('définir la priorité'),
   setBusiness: t('rattacher au business'),
+  setSpace: t('ranger dans l’espace'),
+  moveToFolder: t('ranger dans le dossier'),
   notify: t('m’envoyer une notification'),
   unsubscribe: t('me désinscrire'),
 };
@@ -60,8 +62,10 @@ export function describeCondition(condition: Condition, names?: { tag?: (id: str
   return t('{field} {op} « {value} »', { field: FIELD_LABELS[condition.field], op: OP_LABELS[condition.op], value });
 }
 
-export function describeRuleAction(action: Action, names?: { tag?: (id: string) => string | undefined; business?: (id: string) => string | undefined }) {
+export function describeRuleAction(action: Action, names?: { tag?: (id: string) => string | undefined; business?: (id: string) => string | undefined; space?: (id: string) => string | undefined; folder?: (id: string) => string | undefined }) {
   let value = action.value;
+  if (action.type === 'moveToFolder' && value) value = names?.folder?.(value) ?? value;
+  if (action.type === 'setSpace' && value) value = t(names?.space?.(value) ?? value);
   if (action.type === 'addTag' && value) value = t(names?.tag?.(value) ?? value);
   if (action.type === 'setBusiness' && value) value = names?.business?.(value) ?? value;
   if (action.type === 'setPriority' && value) value = PRIORITIES[Number(value)] ?? value;

@@ -22,12 +22,17 @@ export function NavItem({
   muted,
   menu,
   onDoubleClick,
+  menuOnDoubleClick,
   renaming,
+  drop,
+  badge,
 }: {
   to: string;
   active: boolean;
   icon: ReactNode;
   label: string;
+  /** A small mark after the label (a category hidden from the inbox). */
+  badge?: ReactNode;
   count?: number;
   accent?: string;
   /** Buttons revealed on hover, in place of the count. */
@@ -44,11 +49,18 @@ export function NavItem({
   iconWrap?: (icon: ReactNode) => ReactNode;
   /** Starts a drag (see use-sidebar-drag). */
   onPointerDown?: PointerEventHandler<HTMLDivElement>;
-  onClick?: () => void;
+  onClick?: (e: React.MouseEvent) => void;
   muted?: boolean;
+  /**
+   * Where a mail dragged from the list can land (lib/mail-drag): a folder or a standard folder
+   * of this account. Rows without it are greyed while a mail is dragged.
+   */
+  drop?: { accountId: string; mailboxId?: string; special?: string };
   /** The row's own menu (right-click), in place of the WebView's link menu. */
   menu?: ReactNode;
   onDoubleClick?: () => void;
+  /** Double-click opens the row's menu where the pointer is (folders: rename, delete…). */
+  menuOnDoubleClick?: boolean;
   /** Inline rename: the label becomes a field; null on cancel. */
   renaming?: { value: string; onDone: (value: string | null) => void };
 }) {
@@ -65,18 +77,31 @@ export function NavItem({
     </span>
   );
   const row = (
-    <div className="group/item relative" onPointerDown={renaming ? undefined : onPointerDown}>
+    <div
+      className="group/item relative rounded-lg"
+      onPointerDown={renaming ? undefined : onPointerDown}
+      data-nav-row=""
+      data-drop-account={drop?.accountId}
+      data-drop-mailbox={drop?.mailboxId}
+      data-drop-special={drop?.special}
+      data-drop-label={drop ? label : undefined}
+    >
       <Link
         to={to}
         draggable={false}
-        onClick={(e) => (renaming ? e.preventDefault() : onClick?.())}
+        onClick={(e) => (renaming ? e.preventDefault() : onClick?.(e))}
         onDoubleClick={
-          onDoubleClick
+          menuOnDoubleClick && menu
             ? (e) => {
                 e.preventDefault();
-                onDoubleClick();
+                e.currentTarget.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true, clientX: e.clientX, clientY: e.clientY }));
               }
-            : undefined
+            : onDoubleClick
+              ? (e) => {
+                  e.preventDefault();
+                  onDoubleClick();
+                }
+              : undefined
         }
         style={{ paddingLeft: tree ? (tree.depth === 0 ? 4 : 8 + (tree.depth - 1) * FOLDER_STEP) : 8 + indent * 14 }}
         className={cn(
@@ -98,7 +123,14 @@ export function NavItem({
         ) : (
           iconNode
         )}
-        {renaming ? <RenameField value={renaming.value} onDone={renaming.onDone} /> : <span className="min-w-0 flex-1 truncate">{label}</span>}
+        {renaming ? (
+          <RenameField value={renaming.value} onDone={renaming.onDone} />
+        ) : (
+          <span className="flex min-w-0 flex-1 items-center gap-1.5">
+            <span className="truncate">{label}</span>
+            {badge}
+          </span>
+        )}
         {count ? (
           <span
             className={cn(
@@ -112,7 +144,8 @@ export function NavItem({
         ) : null}
       </Link>
       {iconWrap ? (
-        <span className="absolute top-1/2 z-10 flex -translate-y-1/2" style={{ left: 4 + indent * 14 }}>
+        // Over the icon: after the fold arrow on an account row (4 + 16 + 10, centred on 24 px).
+        <span className="absolute top-1/2 z-10 flex -translate-y-1/2" style={{ left: tree?.depth === 0 ? 26 : 4 + indent * 14 }}>
           {iconWrap(iconNode)}
         </span>
       ) : null}
@@ -220,14 +253,12 @@ export function Section({
   action,
   defaultOpen = true,
   menu,
-  onTitleDoubleClick,
 }: {
   title: string;
   children: ReactNode;
   action?: ReactNode;
   defaultOpen?: boolean;
   menu?: ReactNode;
-  onTitleDoubleClick?: () => void;
 }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -237,7 +268,6 @@ export function Section({
         {(() => {
           const trigger = (
             <CollapsibleTrigger
-              onDoubleClick={onTitleDoubleClick ? (e) => (e.preventDefault(), setOpen(true), onTitleDoubleClick()) : undefined}
               className="text-muted-foreground/80 hover:text-foreground flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide"
             >
               <span className="flex size-4 items-center justify-center">

@@ -2,14 +2,14 @@ import { solar, type IconComponent } from '@/components/ui/solar-icon';
 import { settingsAnchor } from '@/components/settings/ui';
 import { t } from '@/lib/i18n';
 
-export type SettingsPageId = 'accounts' | 'tags' | 'rules' | 'notifications' | 'businesses' | 'ai' | 'mcp' | 'signatures' | 'appearance' | 'security' | 'api' | 'activity';
+export type SettingsPageId = 'accounts' | 'spaces' | 'tags' | 'rules' | 'notifications' | 'businesses' | 'ai' | 'mcp' | 'signatures' | 'appearance' | 'security' | 'api' | 'activity';
 
 /** Ordered by how often people come back to each page: accounts first, developer pages last. */
 const Mail = solar('_accounts');
+const Layers = solar('_mailbox');
 const Tag = solar('_tags');
 const Wand2 = solar('_rules');
 const Bell = solar('_notifications');
-const Briefcase = solar('_business');
 const Bot = solar('_ai');
 const Plug = solar('_mcp');
 const PenLine = solar('_signatures');
@@ -20,11 +20,11 @@ const Activity = solar('_activity');
 
 export const SETTINGS_PAGES: { id: SettingsPageId; label: string; icon: IconComponent }[] = [
   { id: 'accounts', label: t('Comptes'), icon: Mail },
+  { id: 'spaces', label: t('Espaces'), icon: Layers },
   { id: 'tags', label: t('Catégories'), icon: Tag },
   { id: 'rules', label: t('Règles'), icon: Wand2 },
   { id: 'notifications', label: t('Notifications'), icon: Bell },
-  { id: 'businesses', label: t('Business'), icon: Briefcase },
-  { id: 'ai', label: t('Intelligence artificielle'), icon: Bot },
+  { id: 'ai', label: t('IA'), icon: Bot },
   { id: 'mcp', label: t('Connecteurs IA (MCP)'), icon: Plug },
   { id: 'signatures', label: t('Signatures'), icon: PenLine },
   { id: 'appearance', label: t('Apparence et langue'), icon: Palette },
@@ -47,11 +47,13 @@ const ENTRIES: Entry[] = [
   { page: 'signatures', title: t('Mes signatures'), hint: t('Créer et modifier vos signatures'), keywords: t('signature bas de mail pied de page nom fonction téléphone coordonnées') },
   { page: 'signatures', title: t('Nouvelle signature'), anchor: '', query: 'new=1', hint: t('Ajouter une signature'), keywords: t('créer ajouter signature') },
   { page: 'signatures', title: t('Signature par défaut'), hint: t('Par compte : nouveaux mails, réponses'), keywords: t('signature défaut automatique compte réponse transfert') },
-  { page: 'businesses', title: t('Business'), anchor: '', hint: t('Regrouper les mails par activité'), keywords: t('entreprise société activité client projet marque domaine provenance catégorie') },
-  { page: 'businesses', title: t('Nouveau business'), anchor: '', hint: t('Créer une activité et ses critères'), keywords: t('créer ajouter entreprise domaine adresse expéditeur critère emoji couleur') },
+  { page: 'accounts', title: t('Business'), anchor: 'business', hint: t('Regrouper les mails par activité'), keywords: t('entreprise société activité client projet marque domaine provenance catégorie') },
+  { page: 'accounts', title: t('Nouveau business'), anchor: 'business', hint: t('Créer une activité et ses critères'), keywords: t('créer ajouter entreprise domaine adresse expéditeur critère emoji couleur') },
+  { page: 'spaces', title: t('Espaces'), anchor: '', hint: t('Un espace par business, un pour le perso'), keywords: t('espace space arc séparer business personnel pro boîte séparée mélanger glisser déplacer') },
+  { page: 'spaces', title: t('Un espace par business'), anchor: '', hint: t('Créer les espaces en un clic'), keywords: t('créer espaces business automatique') },
   { page: 'tags', title: t('Mes catégories'), hint: t('Catégories personnalisées décrites en langage naturel'), keywords: t('tag étiquette label catégorie personnalisé créer consigne') },
   { page: 'tags', title: t('Catégories génériques'), hint: t('Facture, livraison, sécurité…'), keywords: t('tag étiquette label facture livraison sécurité voyage finance par défaut') },
-  { page: 'tags', title: t('Reclasser tous les mails'), anchor: '', hint: t('Relancer le tri IA'), keywords: t('retrier reclasser retriage tri') },
+  { page: 'tags', title: t('Relancer le tri IA'), anchor: '', hint: t('Relire tous les mails avec l’IA'), keywords: t('retrier reclasser retriage tri') },
   { page: 'rules', title: t('Règles'), anchor: '', hint: t('Automatiser archivage, catégories, notifications'), keywords: t('automatisation filtre action condition archiver supprimer déplacer marquer lu expéditeur') },
   { page: 'rules', title: t('Nouvelle règle'), anchor: '', hint: t('Si… alors…'), keywords: t('créer filtre automatisation condition action') },
   { page: 'rules', title: t('Suggestions de l’agent'), hint: t('Règles proposées d’après vos habitudes'), keywords: t('habitude apprentissage proposition suggestion agent') },

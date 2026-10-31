@@ -1,6 +1,6 @@
 {
   "name": "zmail",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "packageManager": "pnpm@10.12.1",
   "scripts": {
@@ -10,6 +10,7 @@
     "build": "turbo run build",
     "build:app": "bash scripts/build-macos-app.sh --with-web",
     "brand": "bash scripts/sync-brand.sh",
+    "release": "bash scripts/release.sh",
     "i18n:check": "node scripts/i18n-check.mjs",
     "test": "pnpm --filter @zmail/engine test",
     "typecheck": "pnpm --filter @zmail/engine typecheck && pnpm --filter @zmail/ui typecheck",

@@ -6,6 +6,8 @@ import { TAG_ICONS } from '@/lib/tag-icons';
 import { useTRPC, type Tag } from '@/lib/trpc';
 import { PALETTE, cn } from '@/lib/utils';
 import { t } from '@/lib/i18n';
+import { toast } from 'sonner';
+import { IconPicker } from '@/components/icon-picker';
 
 /** Icon + colour grid. `value.icon` null means "just a coloured dot". */
 export function TagStyleGrid({ value, onChange }: { value: { icon: string | null; color: string }; onChange: (v: { icon: string | null; color: string }) => void }) {
@@ -49,13 +51,21 @@ export function TagStyleGrid({ value, onChange }: { value: { icon: string | null
 export function TagStylePopover({ tag, children, align = 'start', open, onOpenChange }: { tag: Tag; children: ReactNode; align?: 'start' | 'end'; open?: boolean; onOpenChange?: (open: boolean) => void }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const save = useMutation(trpc.catalog.saveTag.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries({ queryKey: trpc.catalog.tags.queryKey() }) }));
+  const save = useMutation(trpc.catalog.saveTag.mutationOptions({ onSuccess: () => void queryClient.invalidateQueries({ queryKey: trpc.catalog.tags.queryKey() }), onError: (e) => toast.error(e.message) }));
+  const write = (patch: { icon?: string | null; color?: string }) => save.mutate({ id: tag.id, name: tag.name, description: tag.description, color: patch.color ?? tag.color, icon: patch.icon !== undefined ? patch.icon : (tag.icon ?? null) });
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
       <PopoverTrigger asChild>{children}</PopoverTrigger>
-      <PopoverContent align={align} side="right" className="w-[330px] p-3">
-        <p className="text-muted-foreground mb-2 text-[11px] font-medium tracking-wide uppercase">{t('Icône et couleur')} · {t(tag.name)}</p>
-        <TagStyleGrid value={{ icon: tag.icon ?? null, color: tag.color }} onChange={({ icon, color }) => save.mutate({ id: tag.id, name: tag.name, description: tag.description, color, icon })} />
+      <PopoverContent align={align} side="right" className="w-auto p-3">
+        <IconPicker
+          title={tag.kind === 'system' ? t(tag.name) : tag.name}
+          value={tag.icon ?? null}
+          color={tag.color}
+          dot
+          fallback={<span className="size-2.5 rounded-full" style={{ backgroundColor: tag.color }} />}
+          onChange={(icon) => write({ icon })}
+          onColor={(color) => write({ color })}
+        />
       </PopoverContent>
     </Popover>
   );

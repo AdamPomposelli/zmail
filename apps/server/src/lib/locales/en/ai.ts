@@ -220,4 +220,9 @@ export default {
   'Autres notifications': 'Other notifications',
   'Administratif': 'Admin & paperwork',
   'Voyages': 'Travel',
+  'Vos mails sont triés sans IA': 'Your emails are sorted without AI',
+  'Le mode Gratuit n’a plus de modèle gratuit pour le tri (il est devenu payant) : seules les règles locales trient. Passez en mode Business dans Réglages → IA pour retrouver le tri par IA.': 'Free mode has no free sorting model left (it became paid): only local rules sort your emails. Switch to Business mode in Settings → AI to get AI sorting back.',
+  'Aucun modèle de votre service d’IA ne peut trier les mails : seules les règles locales trient. Vérifiez Réglages → IA.': 'No model from your AI service can sort emails: only local rules sort them. Check Settings → AI.',
+  'règles ZMail': 'ZMail rules',
+  'Connectez ZenMux pour trier avec ses modèles gratuits': 'Connect ZenMux to sort with its free models',
 } satisfies Record<string, string>;

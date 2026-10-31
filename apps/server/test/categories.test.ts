@@ -7,7 +7,7 @@ import { createTestEngine } from './helpers';
 let engine: EngineContext;
 
 beforeAll(async () => {
-  ({ engine } = await createTestEngine());
+  ({ engine } = await createTestEngine({ sober: true }));
 });
 
 describe('one topic per mail', () => {
@@ -32,24 +32,33 @@ describe('one topic per mail', () => {
 
 describe('starting categories follow the use', () => {
   const visible = () => engine.catalog.tags().map((t) => t.id);
+  const NICHE = ['delivery', 'personal', 'chargeback', 'opportunity', 'travel'];
 
-  it('a personal use hides the business categories and offers them as a template', () => {
+  it('a new install starts sober: no niche category until the user turns it on', () => {
+    expect(visible()).toEqual(expect.arrayContaining(['important', 'to-respond', 'finance', 'security', 'newsletter', 'marketing', 'notification']));
+    for (const id of NICHE) expect(visible()).not.toContain(id);
+    expect(engine.catalog.hiddenTags().map((t) => t.id)).toEqual(expect.arrayContaining(NICHE));
+  });
+
+  it('a personal use adds only « Administratif », the rest stays a template', () => {
     engine.catalog.applyUsage('personal');
-    expect(visible()).toEqual(expect.arrayContaining(['personal', 'admin', 'travel', 'finance']));
-    expect(visible()).not.toContain('chargeback');
+    expect(visible()).toContain('admin');
+    for (const id of NICHE) expect(visible()).not.toContain(id);
+    expect(engine.catalog.packs().find((p) => p.id === 'personal')).toMatchObject({ missing: 3 });
     expect(engine.catalog.packs().find((p) => p.id === 'business')).toMatchObject({ missing: 3 });
   });
 
   it('adding the business template (e.g. a new business) shows them and switches to both', () => {
     engine.catalog.addPack('business');
-    expect(visible()).toEqual(expect.arrayContaining(['opportunity', 'chargeback', 'meeting', 'personal']));
+    expect(visible()).toEqual(expect.arrayContaining(['opportunity', 'chargeback', 'meeting', 'admin']));
     expect(engine.catalog.usage()).toBe('both');
   });
 
-  it('a business use hides the personal ones', () => {
+  it('a business use adds only « Réunion »', () => {
     engine.catalog.applyUsage('business');
-    expect(visible()).not.toContain('travel');
-    expect(visible()).toContain('chargeback');
+    expect(visible()).toContain('meeting');
+    expect(visible()).not.toContain('admin');
+    expect(visible()).not.toContain('chargeback');
   });
 
   it('on an existing install, categories added by an update start hidden and old pile-ups are cleaned', () => {

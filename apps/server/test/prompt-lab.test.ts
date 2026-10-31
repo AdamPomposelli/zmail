@@ -89,7 +89,7 @@ describe('prompt lab', () => {
     const good = await engine.lab.evaluate();
     const current = engine.prompts.get();
     const bad = await engine.lab.evaluate({ prompts: { ...current, triage: { ...current.triage, llm: `${current.triage.llm}\nFLAGALL` } } });
-    expect(good.reference.cases).toBe(85);
+    expect(good.reference.cases).toBe(88);
     expect(good.yours.total).toBeGreaterThan(0);
     expect(bad.yours.failures.some((f) => f.subject === 'Promo du jour')).toBe(true);
     expect(bad.overall).toBeLessThan(good.overall);

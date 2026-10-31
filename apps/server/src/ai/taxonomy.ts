@@ -46,14 +46,15 @@ export const TOPIC_ORDER = ['chargeback', '*custom', 'security', 'personal', 'me
 export const ATTENTION_TAGS = new Set(['important', 'to-respond', 'opportunity']);
 
 /**
- * Category packs. `personal` and `business` share the everyday ones; « both » keeps them all.
- * The extra ones of each pack are offered as templates later (e.g. when a business is added).
+ * Categories a new install starts with: the few everyone needs, nothing tied to one trade or
+ * one life. The others (parcels, family, chargebacks, leads…) are templates in Settings →
+ * Categories, grouped in packs, that the user turns on when they need them.
  */
 export type Usage = 'personal' | 'business' | 'both';
-const COMMON = ['important', 'to-respond', 'finance', 'security', 'delivery', 'newsletter', 'marketing', 'notification'];
-export const PACK_EXTRAS = { personal: ['personal', 'admin', 'travel'], business: ['opportunity', 'chargeback', 'meeting'] } as const;
-export const packFor = (usage: Usage): Set<string> =>
-  new Set(usage === 'both' ? SYSTEM_TAGS.map((t) => t.id) : [...COMMON, ...PACK_EXTRAS[usage]]);
+const CORE = ['important', 'to-respond', 'finance', 'security', 'newsletter', 'marketing', 'notification'];
+const USAGE_EXTRAS: Record<Usage, string[]> = { personal: ['admin'], business: ['meeting'], both: ['admin', 'meeting'] };
+export const PACK_EXTRAS = { personal: ['personal', 'admin', 'travel', 'delivery'], business: ['opportunity', 'chargeback', 'meeting'] } as const;
+export const packFor = (usage: Usage): Set<string> => new Set([...CORE, ...USAGE_EXTRAS[usage]]);
 
 const BUILTIN_IDS = new Set<string>(SYSTEM_TAGS.map((t) => t.id));
 

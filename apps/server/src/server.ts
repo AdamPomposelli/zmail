@@ -1,4 +1,6 @@
 import { Hono, type MiddlewareHandler } from 'hono';
+import { MICROSOFT_REDIRECT_PATH } from './mail/oauth';
+import { t } from './lib/i18n';
 import { streamSSE } from 'hono/streaming';
 import { getMimeType } from 'hono/utils/mime';
 import { fetchRequestHandler } from '@trpc/server/adapters/fetch';
@@ -30,6 +32,18 @@ export function createApp(engine: EngineContext, uiDir?: string) {
   mcp.use('*', requireApiKey(engine));
   mcp.all('/', (c) => handleMcpRequest(engine, c.get('apiKey'), c.req.raw));
   app.route('/mcp', mcp);
+
+  // Microsoft's sign-in comes back here (« Se connecter avec Microsoft »), in the user's browser.
+  app.get(MICROSOFT_REDIRECT_PATH, async (c) => {
+    const result = await engine.oauth.callback(c.req.query());
+    const escape = (v: string) => v.replace(/[&<>"]/g, (ch) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[ch]!);
+    const title = result.ok ? t('C’est fait : retournez dans ZMail') : t('La connexion n’a pas abouti');
+    const body = result.ok ? t('{email} est connecté. Vous pouvez fermer cet onglet.', { email: result.message || 'Microsoft' }) : result.message;
+    return c.html(
+      `<!doctype html><meta charset="utf-8"><title>ZMail</title><meta name="viewport" content="width=device-width"><style>body{font:15px -apple-system,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh;margin:0;background:#111;color:#eee}main{text-align:center;max-width:420px;padding:24px}h1{font-size:20px;margin:12px 0 6px}p{color:#aaa;line-height:1.5}.i{font-size:40px}</style><main><div class="i">${result.ok ? '✅' : '⚠️'}</div><h1>${escape(title)}</h1><p>${escape(body)}</p></main>${result.ok ? '<script>setTimeout(()=>window.close(),1500)</script>' : ''}`,
+      result.ok ? 200 : 400,
+    );
+  });
 
   app.get('/api/health', (c) => c.json({ ok: true, accounts: engine.accounts.list().length, bridge: engine.bridge.connected }));
 

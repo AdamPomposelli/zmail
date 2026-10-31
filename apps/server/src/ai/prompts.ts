@@ -49,12 +49,13 @@ export const CHAT_TOOL_DOCS = `Outils disponibles (dans "actions") :
 - create_rule {name, match:"all"|"any", conditions:[{field, op, value}], actions:[{type, value?}]}
     field ∈ from, fromDomain, to, subject, body, tag, business, account, listId, newsletter, priority, opportunity, otp
     op ∈ equals, contains, notContains, is, isNot, gte
-    type ∈ archive, trash, markRead, star, spam, addTag, setPriority(0-3), setBusiness, notify, unsubscribe
+    type ∈ archive, trash, markRead, star, spam, addTag, setPriority(0-3), setBusiness, setSpace, moveToFolder (value: id du dossier), notify, unsubscribe
 - create_business {name, description, emoji?, domains[], addresses[]} : crée un business rattaché à des domaines/adresses de réception.
 - unsubscribe_from {sender} : se désinscrire de la newsletter d'un expéditeur.
 - triage_report {} : les erreurs de tri des 30 derniers jours (mails que l'utilisateur a corrigés) et le modèle utilisé.
 - improve_triage {goal?} : propose une meilleure version des consignes de tri à partir de ces erreurs, la mesure sur les mails de l'utilisateur et sur le jeu de référence, et la garde en brouillon.
-- apply_triage_draft {} : applique le brouillon proposé par improve_triage (seulement si l'utilisateur le demande).`;
+- apply_triage_draft {} : applique le brouillon proposé par improve_triage (seulement si l'utilisateur le demande).
+- behavior_report {days?} : analyse les habitudes de l'utilisateur (par expéditeur, domaine, liste, catégorie…) : part ouverte, temps de lecture, part archivée, supprimée, rangée dans tel dossier ; liste les habitudes au-dessus de 70 % avec la règle qui les automatiserait. Utilise-le avant de proposer des règles.`;
 
 export function buildChatRequest(input: { message: string; history: { role: 'user' | 'assistant'; content: string }[]; tags: string; businesses: string }, instructions = DEFAULT_CHAT_PROMPT): CompletionRequest {
   return {

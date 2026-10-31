@@ -1,5 +1,5 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { AlertTriangle, Apple, Check, Lock, CloudUpload, Hand, ShieldCheck, CheckCircle2, ChevronsUpDown, Cpu, ExternalLink, Gauge, KeyRound, Loader2, Plus, RotateCcw, Sparkles, Trash2, XCircle, Target, Zap, Coins } from 'lucide-react';
+import { AlertTriangle, Apple, ChevronDown, Check, Lock, CloudUpload, Hand, ShieldCheck, CheckCircle2, ChevronsUpDown, Cpu, ExternalLink, Gauge, KeyRound, Loader2, Plus, RotateCcw, Sparkles, Trash2, XCircle, Target, Zap, Coins } from 'lucide-react';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { toast } from 'sonner';
 import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, CommandList } from '@/components/ui/command';
@@ -11,6 +11,7 @@ import { Switch } from '@/components/ui/switch';
 import { Textarea } from '@/components/ui/textarea';
 import { Card, GhostButton, PrimaryButton, SettingsPage } from '@/components/settings/ui';
 import { RetriageButton, RetriagePanel, RetriageSuggestion } from '@/components/retriage';
+import { AiBacklog } from '@/components/settings/account-progress';
 import { openExternal } from '@/lib/native';
 import { useTRPC, type Outputs } from '@/lib/trpc';
 import { cn } from '@/lib/utils';
@@ -48,6 +49,7 @@ export default function AiSettings() {
   const { data: status } = useQuery(trpc.ai.status.queryOptions());
   const [adding, setAdding] = useState(false);
   const [customize, setCustomize] = useState(false);
+  const [advanced, setAdvanced] = useState(() => typeof location !== 'undefined' && location.hash === '#ia-avancee');
   const invalidate = () => void queryClient.invalidateQueries({ queryKey: trpc.ai.status.queryKey() });
   const setApple = useMutation(trpc.ai.setAppleEnabled.mutationOptions({ onSuccess: invalidate }));
   const removeConnection = useMutation(trpc.ai.removeConnection.mutationOptions({ onSuccess: invalidate }));
@@ -69,93 +71,42 @@ export default function AiSettings() {
   const monthly = status.capabilities.reduce((sum, c) => sum + (c.active?.monthlyCost ?? 0), 0);
   const hasOverrides = status.capabilities.some((c) => c.override);
 
+  // The free mode without any free model left: ZMail's rules sort, with no AI at all.
+  const current = status.presets.find((p) => p.id === status.preset);
+  const business = status.presets.find((p) => p.id === 'balanced');
+  const rulesOnly = Boolean(current?.localOnly && !current.missing);
+
   return (
     <SettingsPage
-      title={t('Intelligence artificielle')}
+      title={t('IA')}
       description={t('ZMail choisit lui-même le meilleur modèle pour chaque tâche, d’après ses benchmarks. Vous connectez un service, il s’occupe du reste.')}
       actions={<RetriageButton />}
     >
-      <PresetPicker status={status} onChange={(preset) => setPreset.mutate({ preset })} pending={setPreset.isPending} />
-      {modeChanged ? <RetriageSuggestion mode={modeChanged} onClose={() => setModeChanged(null)} /> : null}
+      {/* Right under « Relancer le tri » : its progress, then what it did and when. */}
       <RetriagePanel />
-
-      <Card id="apple-intelligence">
-        <div className="flex items-start gap-4">
-          <BrandLogo brand="apple-intelligence" tile size={44} />
+      <PresetPicker status={status} onChange={(preset) => setPreset.mutate({ preset })} pending={setPreset.isPending} />
+      {rulesOnly ? (
+        <section className="border-warning/30 bg-warning/[0.07] flex items-start gap-3 rounded-xl border px-4 py-3">
+          <AlertTriangle className="text-warning mt-0.5 size-4 shrink-0" />
           <div className="min-w-0 flex-1">
-            <p className="flex items-center gap-2 text-[14px] font-semibold">
-              Apple Intelligence
-              <FreeBadge />
-              <span className={cn('rounded-sm px-1.5 text-[11px] font-medium', status.apple.available ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning')}>
-                {status.apple.available ? t('Disponible') : t('Indisponible')}
-              </span>
+            <p className="text-[13px] font-medium">{t('Vos mails sont triés sans IA, par les règles de ZMail')}</p>
+            <p className="text-muted-foreground mt-0.5 text-[12.5px] leading-relaxed">
+              {t('Le mode Gratuit n’a plus de modèle d’IA gratuit pour le tri (celui utilisé jusqu’ici est devenu payant). Apple Intelligence ne trie pas : mesurée moins précise que les règles de ZMail sur le tri (82 % contre 92 %), elle sert au chat IA. Ce sont donc les règles de ZMail, sans IA, qui trient : elles peuvent confondre une newsletter avec une facture.')}
             </p>
-            <p className="text-muted-foreground mt-0.5 text-[12.5px]">{t('Modèle on-device de macOS : gratuit, privé, prioritaire dès qu’il est disponible.')}</p>
-            {status.apple.guidance ? <AppleWarning guidance={status.apple.guidance} reason={status.apple.reason} /> : null}
+            {business && !business.missing ? (
+              <button type="button" disabled={setPreset.isPending} onClick={() => setPreset.mutate({ preset: 'balanced' })} className="bg-foreground text-background hover:bg-foreground/90 mt-2.5 h-8 rounded-lg px-3 text-[12.5px] font-medium">
+                {business.monthlyCost
+                  ? t('Passer en {mode} · ≈ {cost} par mois', { mode: PRESET_TEXT.balanced.label, cost: money(business.monthlyCost) })
+                  : t('Passer en {mode}', { mode: PRESET_TEXT.balanced.label })}
+              </button>
+            ) : null}
           </div>
-          <Switch checked={status.appleEnabled} onCheckedChange={(enabled) => setApple.mutate({ enabled })} />
-        </div>
-      </Card>
-
-      <Card
-        title={t('Services connectés')}
-        description={t('Une clé suffit : pas de modèle à choisir.')}
-        action={
-          <PrimaryButton onClick={() => setAdding(true)}>
-            <Plus className="size-4" />
-            {t('Connecter')}
-          </PrimaryButton>
-        }
-      >
-        {status.connections.length ? (
-          <ul className="-my-1 divide-y divide-border">
-            {status.connections.map((c) => (
-              <li key={c.id} className="flex items-center gap-3 py-2.5">
-                <BrandLogo brand={brandForService(c.kind)} tile size={32} fallback={c.name} />
-                <div className="min-w-0 flex-1">
-                  <p className="text-[13.5px] font-medium">{c.name}</p>
-                  <p className="text-muted-foreground truncate text-[12px]">
-                    {tp(c.models, '{n} modèle disponible', '{n} modèles disponibles')} · {c.hasKey ? t('clé enregistrée (chiffrée)') : t('sans clé')}
-                  </p>
-                </div>
-                <GhostButton className="hover:text-destructive" onClick={() => window.confirm(t('Déconnecter {name} ?', { name: c.name })) && removeConnection.mutate({ id: c.id })}>
-                  <Trash2 className="size-3.5" />
-                </GhostButton>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="text-muted-foreground text-[13px]">{t('Aucun service. Sans IA disponible, ZMail trie avec son moteur local (score 93/100 sur nos benchmarks).')}</p>
-        )}
-      </Card>
-
-      <Card
-        title={t('Orchestration des modèles')}
-        description={status.benchmarkedAt ? t('Choix automatique d’après nos benchmarks du {date} : qualité d’abord, puis coût et rapidité.', { date: new Date(status.benchmarkedAt).toLocaleDateString(intlLocale) }) : t('Choix automatique.')}
-        action={
-          <label className="text-muted-foreground flex items-center gap-2 text-[12.5px] whitespace-nowrap">
-            {t('Personnaliser')}
-            <Switch checked={customize || hasOverrides} onCheckedChange={setCustomize} />
-          </label>
-        }
-      >
-        <div className="text-muted-foreground -mx-1 mb-1 grid grid-cols-[1fr_1.9fr_76px_60px_84px] gap-3 px-1 text-[11px] font-medium tracking-wide uppercase">
-          <span>{t('Capacité')}</span>
-          <span>{t('Modèle utilisé')}</span>
-          <span>{t('Qualité')}</span>
-          <span>{t('Latence')}</span>
-          <span className="text-right">{t('Coût / mois')}</span>
-        </div>
-        <div className="divide-y divide-border">
-          {status.capabilities.map((cap) => (
-            <CapabilityLine key={cap.id} cap={cap} status={status} customize={customize || hasOverrides} onPick={(override) => setOverride.mutate({ capability: cap.id, override })} />
-          ))}
-        </div>
-      </Card>
+        </section>
+      ) : null}
+      {modeChanged ? <RetriageSuggestion mode={modeChanged} onClose={() => setModeChanged(null)} /> : null}
+      <AiBacklog />
 
       <ServerSyncCard />
-
-      <ForecastCard status={status} monthly={monthly} onChatPerDay={(value) => setChatPerDay.mutate({ value })} onMailsPerDay={(value) => setMailsPerDay.mutate({ value })} onUse={(capability, override) => setOverride.mutate({ capability, override })} />
 
       {status.usage.length ? (
         <Card title={t('Consommation réelle (30 derniers jours)')}>
@@ -181,11 +132,105 @@ export default function AiSettings() {
         </Card>
       ) : null}
 
-      <AdvancedAiCard status={status} onPick={(capability, override) => setOverride.mutate({ capability, override })} />
+      <Card
+        title={t('Services connectés')}
+        description={t('Apple Intelligence est inclus dans macOS ; pour les autres, une clé suffit, sans modèle à choisir.')}
+        action={
+          <PrimaryButton onClick={() => setAdding(true)}>
+            <Plus className="size-4" />
+            {t('Connecter')}
+          </PrimaryButton>
+        }
+      >
+        <ul className="-my-1 divide-y divide-border">
+          <li id="apple-intelligence" className="flex items-start gap-3 py-2.5">
+            <BrandLogo brand="apple-intelligence" tile size={32} />
+            <div className="min-w-0 flex-1">
+              <p className="flex flex-wrap items-center gap-1.5 text-[13.5px] font-medium">
+                Apple Intelligence
+                <FreeBadge />
+                <ServiceState ok={status.apple.available} label={status.apple.available ? t('Disponible') : t('Indisponible')} />
+              </p>
+              <p className="text-muted-foreground text-[12px]">{t('Intégré à macOS : gratuit et privé, sur votre Mac. Utilisé pour le chat IA ; pas pour le tri, où il est moins précis.')}</p>
+              {status.apple.guidance ? <AppleWarning guidance={status.apple.guidance} reason={status.apple.reason} /> : null}
+            </div>
+            <Switch checked={status.appleEnabled} onCheckedChange={(enabled) => setApple.mutate({ enabled })} aria-label={t('Utiliser Apple Intelligence')} />
+          </li>
+          {status.connections.map((c) => (
+            <li key={c.id} className="flex items-center gap-3 py-2.5">
+              <BrandLogo brand={brandForService(c.kind)} tile size={32} fallback={c.name} />
+              <div className="min-w-0 flex-1">
+                <p className="flex flex-wrap items-center gap-1.5 text-[13.5px] font-medium">
+                  {c.name}
+                  <span className="bg-muted text-muted-foreground rounded-sm px-1.5 text-[11px] font-medium">{t('Payant')}</span>
+                  <ServiceState ok={c.hasKey && c.models > 0} label={!c.hasKey ? t('Clé manquante') : c.models > 0 ? t('Disponible') : t('Aucun modèle')} />
+                </p>
+                <p className="text-muted-foreground truncate text-[12px]">
+                  {tp(c.models, '{n} modèle disponible', '{n} modèles disponibles')} · {c.hasKey ? t('clé enregistrée (chiffrée)') : t('sans clé')}
+                </p>
+              </div>
+              <GhostButton className="hover:text-destructive" onClick={() => window.confirm(t('Déconnecter {name} ?', { name: c.name })) && removeConnection.mutate({ id: c.id })}>
+                <Trash2 className="size-3.5" />
+              </GhostButton>
+            </li>
+          ))}
+        </ul>
+        {status.connections.length ? null : <p className="text-muted-foreground mt-2 text-[12.5px]">{t('Connectez un service (ZenMux, OpenRouter…) pour trier avec une IA : sans lui, ce sont les règles de ZMail qui trient (92/100 sur nos benchmarks).')}</p>}
+      </Card>
+
+      {/* Advanced: a line that unfolds; its sections then come below, like the others. */}
+      <button
+        type="button"
+        id="ia-avancee"
+        onClick={() => setAdvanced((v) => !v)}
+        aria-expanded={advanced}
+        className="border-border hover:bg-accent/40 flex w-full items-center gap-3 rounded-xl border px-5 py-3.5 text-left transition"
+      >
+        <span className="min-w-0 flex-1">
+          <span className="block text-[14px] font-semibold">{t('Avancé')}</span>
+          <span className="text-muted-foreground block text-[12.5px]">{t('Orchestration des modèles, prévisionnel, prompts et modèles par action.')}</span>
+        </span>
+        <ChevronDown className={cn('text-muted-foreground size-4 shrink-0 transition-transform duration-200', advanced && 'rotate-180')} />
+      </button>
+      {advanced ? (
+        <>
+          <Card
+            title={t('Orchestration des modèles')}
+            description={status.benchmarkedAt ? t('Choix automatique d’après nos benchmarks du {date} : qualité d’abord, puis coût et rapidité.', { date: new Date(status.benchmarkedAt).toLocaleDateString(intlLocale) }) : t('Choix automatique.')}
+            action={
+              <label className="text-muted-foreground flex items-center gap-2 text-[12.5px] whitespace-nowrap">
+                {t('Personnaliser')}
+                <Switch checked={customize || hasOverrides} onCheckedChange={setCustomize} />
+              </label>
+            }
+          >
+            <div className="text-muted-foreground -mx-1 mb-1 grid grid-cols-[1fr_1.9fr_76px_60px_84px] gap-3 px-1 text-[11px] font-medium tracking-wide uppercase">
+              <span>{t('Capacité')}</span>
+              <span>{t('Modèle utilisé')}</span>
+              <span>{t('Qualité')}</span>
+              <span>{t('Latence')}</span>
+              <span className="text-right">{t('Coût / mois')}</span>
+            </div>
+            <div className="divide-y divide-border">
+              {status.capabilities.map((cap) => (
+                <CapabilityLine key={cap.id} cap={cap} status={status} customize={customize || hasOverrides} onPick={(override) => setOverride.mutate({ capability: cap.id, override })} />
+              ))}
+            </div>
+          </Card>
+
+          <ForecastCard status={status} monthly={monthly} onChatPerDay={(value) => setChatPerDay.mutate({ value })} onMailsPerDay={(value) => setMailsPerDay.mutate({ value })} onUse={(capability, override) => setOverride.mutate({ capability, override })} />
+          <AdvancedAiCard status={status} onPick={(capability, override) => setOverride.mutate({ capability, override })} />
+        </>
+      ) : null}
 
       <ConnectDialog open={adding} onOpenChange={setAdding} kinds={status.kinds} onDone={invalidate} />
     </SettingsPage>
   );
+}
+
+/** « Disponible » in green, or what is wrong in amber, next to a service's name. */
+function ServiceState({ ok, label }: { ok: boolean; label: string }) {
+  return <span className={cn('rounded-sm px-1.5 text-[11px] font-medium', ok ? 'bg-success/10 text-success' : 'bg-warning/10 text-warning')}>{label}</span>;
 }
 
 function AppleWarning({ guidance, reason }: { guidance: NonNullable<Status['apple']['guidance']>; reason: string | null }) {
@@ -236,7 +281,7 @@ function CapabilityLine({ cap, status, customize, onPick }: { cap: CapabilityRow
             {active.source === 'apple' ? <FreeBadge /> : <span className="bg-ai/10 text-ai shrink-0 rounded-sm px-1 text-[10.5px]">auto</span>}
           </p>
         ) : (
-          <p className="text-muted-foreground text-[13px]">{t('Moteur local')}</p>
+          <p className="text-muted-foreground text-[13px]">{t('Règles ZMail, sans IA')}</p>
         )}
         {active && !customize ? <p className="text-muted-foreground truncate text-[11.5px]">{active.providerName}{cap.fallbacks.length ? ` · ${t('relais : {models}', { models: cap.fallbacks.map((f) => modelName(f.name)).join(', ') })}` : ''}</p> : null}
       </div>
@@ -265,7 +310,7 @@ function ModelPicker({ cap, status, onPick }: { cap: CapabilityRow; status: Stat
   return (
     <Popover open={open} onOpenChange={setOpen}>
       <PopoverTrigger className="flex h-8 w-full items-center gap-2 rounded-lg px-2.5 text-left text-[13px] ring-border hover:bg-accent/50 ring-1">
-        <span className="min-w-0 flex-1 truncate">{current ? modelName(current.name) : <span>{t('Automatique')} <span className="text-muted-foreground">— {cap.active ? modelName(cap.active.name) : t('moteur local')}</span></span>}</span>
+        <span className="min-w-0 flex-1 truncate">{current ? modelName(current.name) : <span>{t('Automatique')} <span className="text-muted-foreground">— {cap.active ? modelName(cap.active.name) : t('règles ZMail')}</span></span>}</span>
         <ChevronsUpDown className="text-muted-foreground size-3.5 shrink-0" />
       </PopoverTrigger>
       <PopoverContent align="start" className="w-[480px] p-0">
@@ -649,28 +694,18 @@ function useLabProgress(active: boolean) {
 function AdvancedAiCard({ status, onPick }: { status: Status; onPick: (cap: CapabilityRow['id'], o: { providerId: string; model: string } | null) => void }) {
   const trpc = useTRPC();
   const queryClient = useQueryClient();
-  const [open, setOpen] = useState(false);
+  // Shown once « Avancé » is unfolded: it loads right away.
+  const open = true;
   const [actionId, setActionId] = useState<ActionSetup['id']>('triage');
   const { data: setup } = useQuery({ ...trpc.prompts.setup.queryOptions(), enabled: open });
   const { data: report } = useQuery({ ...trpc.prompts.report.queryOptions({ days: 30 }), enabled: open });
 
   return (
     <Card
-      id="ia-avancee"
-      title={t('Avancé : prompts et modèles par action')}
+      title={t('Prompts et modèles par action')}
       description={t('Pour régler l’IA vous-même : le modèle de chaque action, et ce qu’on lui demande. Chaque version se mesure sur vos mails avant d’être appliquée, et l’historique permet de revenir en arrière.')}
-      action={
-        <label className="text-muted-foreground flex items-center gap-2 text-[12.5px] whitespace-nowrap">
-          {t('Afficher')}
-          <Switch checked={open} onCheckedChange={setOpen} />
-        </label>
-      }
     >
-      {!open ? (
-        <p className="text-muted-foreground text-[12.5px]">
-          {t('Tri des mails, chat IA et désinscription : consignes modifiables, test sur vos propres mails, amélioration automatique par le chat IA ou par un client MCP (Claude, Cursor…).')}
-        </p>
-      ) : !setup ? (
+      {!setup ? (
         <p className="text-muted-foreground flex items-center gap-2 text-[13px]">
           <Loader2 className="size-3.5 animate-spin" /> {t('Chargement…')}
         </p>
@@ -775,8 +810,8 @@ function ActionEditor({
           <p className="text-muted-foreground mt-1.5 text-[11.5px]">{action.route.length > 1
               ? t('Relais si indisponible : {models}', { models: action.route.slice(1).map((r) => r.model).join(', ') })
               : action.route.length
-                ? t('Pas de relais : le moteur local prend le relais.')
-                : t('Aucun modèle : le moteur local décide.')}</p>
+                ? t('Pas de relais : les règles de ZMail prennent le relais.')
+                : t('Aucun modèle : les règles de ZMail décident.')}</p>
         </div>
         <div className={cn('rounded-lg p-3 text-[12.5px] leading-relaxed ring-1', format === 'jev' ? 'bg-ai/5 ring-ai/25' : 'bg-muted ring-border')}>
           {format === 'jev' ? (
@@ -925,7 +960,7 @@ function ActionEditor({
 }
 
 const fr = (n: number | null | undefined) => (n === null || n === undefined ? '—' : num(n, { maximumFractionDigits: 1 }));
-const modelLabel = (model?: string | null) => (!model ? t('moteur local') : model.startsWith('typesafe/') ? `Jev ${model.replace(/^typesafe\/jev-/, '')}` : model === 'apple-on-device' ? 'Apple Intelligence' : model.replace(/^[^/]+\//, ''));
+const modelLabel = (model?: string | null) => (!model ? t('règles ZMail') : model.startsWith('typesafe/') ? `Jev ${model.replace(/^typesafe\/jev-/, '')}` : model === 'apple-on-device' ? 'Apple Intelligence' : model.replace(/^[^/]+\//, ''));
 
 function TriageReport({ report }: { report: Outputs['prompts']['report'] }) {
   const [open, setOpen] = useState(false);
@@ -1226,7 +1261,7 @@ function PresetPicker({ status, onChange, pending }: { status: Status; onChange:
                 <span className="text-muted-foreground text-[11.5px]">{t('Pas encore mesuré.')}</span>
               )}
               {/* What matters is precision, speed and price; which models do the work is ZMail's business. */}
-              {p.missing ? <span className="text-warning mt-auto text-[11.5px] leading-snug">{p.missing}</span> : null}
+              {p.missing ? <span className="text-warning mt-auto text-[11.5px] leading-snug">{p.missing}</span> : p.localOnly ? <span className="text-warning mt-auto text-[11.5px] leading-snug">{t('Aucun modèle d’IA gratuit en ce moment : les règles de ZMail trient, sans IA.')}</span> : null}
             </button>
           );
         })}
